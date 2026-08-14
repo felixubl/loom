@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 40" width="216" height="72" role="img" aria-label="loom">
+  <title>loom</title>
+  <!-- The two o's are the smallest possible graph: one node, an edge, another
+       node. The arrow tip touches the second node's rim exactly. Node diameter
+       equals the type size, so the mark reads as one word, not word plus icon. -->
+  <g font-family="'Hepta Slab','Iowan Old Style',Georgia,serif" font-weight="640" font-size="22" fill="#211d17">
+    <text x="25.2" y="30" text-anchor="end">l</text>
+    <text x="83.8" y="30" text-anchor="start">m</text>
+  </g>
+  <g transform="translate(27,7.34) scale(1.375)">
+    <line x1="8" y1="12" x2="18.9" y2="12" stroke="#211d17" stroke-opacity=".55" stroke-width="1.6"/>
+    <polygon points="24,12 18.9,15 18.9,9" fill="#211d17" fill-opacity=".55"/>
+    <circle cx="8" cy="12" r="8" fill="#C46210"/>
+    <circle cx="32" cy="12" r="8" fill="#C46210"/>
+  </g>
+</svg>

@@ -1,0 +1,12 @@
+# Build and test output
+*.test
+*.out
+/coverage.*
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/
+
+# Local agent opt-out marker
+.claude/
