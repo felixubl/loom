@@ -169,29 +169,121 @@ func TestRecursiveDefinition(t *testing.T) {
 	}
 }
 
-// A closure taken out of its session sees no definitions, so its references
-// fall back to atoms. That boundary is worth pinning.
-func TestClosureOutsideItsSessionLosesDefinitions(t *testing.T) {
+// Scoping is lexical: a closure carries the environment it was defined in, and
+// applying it never resolves its free names against the caller's environment.
+// Rebinding a name a function uses cannot change what that function means.
+func TestClosuresAreLexicallyScoped(t *testing.T) {
 	s := loom.NewSession(loom.New())
-	if _, err := s.Store().ParseProgram("greet = x => hello(x)"); err != nil {
-		t.Fatal(err)
+	wantLines(t, run(t, s, `
+		helper = x => A
+		f      = x => helper(x)
+		g      = f
+		g(Alice)
+	`), "A")
+
+	// A later binding of helper shadows the name for new code only.
+	wantLines(t, run(t, s, `
+		helper = x => B
+		g(Alice)
+		helper(Alice)
+	`), "A", "B")
+}
+
+// The closure's environment travels with it, so it keeps working when it is
+// applied through the bare kernel API with no session in sight.
+func TestClosureCarriesItsEnvironmentThroughTheKernelAPI(t *testing.T) {
+	s := loom.NewSession(loom.New())
+	run(t, s, `
+		helper = x => greeted(x)
+		f      = x => helper(x)
+	`)
+	fn, ok := s.Env().Lookup("f")
+	if !ok {
+		t.Fatal("f is not bound")
 	}
-	run(t, s, "greet = x => hello(x)")
-
-	// Through the session, hello is still an inert atom, so nothing changes.
-	wantLines(t, run(t, s, "greet(Alice)"), "hello(Alice)")
-
-	// Through the bare kernel API the reference to greet itself falls back.
-	term, err := loom.Parse("greet(Alice)")
+	v, err := s.Store().World().Apply(fn, loom.Atom{ID: s.Store().Atom(loom.NameAtom("Alice"))})
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err := s.Store().World().Eval(term)
+	if got := s.Store().Display(v); got != "greeted(Alice)" {
+		t.Fatalf("got %q, want greeted(Alice)", got)
+	}
+}
+
+// Collecting every top-level name before resolving any body is what lets a
+// definition refer to one written further down, and two refer to each other.
+func TestForwardAndMutualReferences(t *testing.T) {
+	s := loom.NewSession(loom.New())
+	wantLines(t, run(t, s, `
+		a = b
+		b = Alice
+		a
+	`), "Alice")
+
+	s = loom.NewSession(loom.New())
+	wantLines(t, run(t, s, `
+		even = n => odd(n)
+		odd  = n => reached(n)
+		even(Alice)
+	`), "reached(Alice)")
+}
+
+// A definition that depends on its own value, rather than merely on its own
+// name, is an error rather than a hang.
+func TestCyclicDefinition(t *testing.T) {
+	s := loom.NewSession(loom.New())
+	program, err := s.Store().ParseProgram("a = b\nb = a\na")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := s.Store().Display(v); got != "greet(Alice)" {
-		t.Fatalf("got %q, want greet(Alice)", got)
+	if _, err := s.RunProgram(program); !errors.Is(err, loom.ErrCyclicDefinition) {
+		t.Fatalf("got %v, want cyclic_definition", err)
+	}
+}
+
+func TestDuplicateDefinition(t *testing.T) {
+	s := loom.NewSession(loom.New())
+	program, err := s.Store().ParseProgram("a = Alice\na = Bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RunProgram(program); !errors.Is(err, loom.ErrDuplicateDefinition) {
+		t.Fatalf("got %v, want duplicate_definition", err)
+	}
+
+	// Across statements it is ordinary shadowing, which a REPL depends on.
+	s = loom.NewSession(loom.New())
+	wantLines(t, run(t, s, "a = Alice\n"))
+	wantLines(t, run(t, s, "a = Bob\n"))
+	wantLines(t, run(t, s, "a"), "Bob")
+}
+
+// Reads and writes are different sides of the language, and match is a read.
+func TestMutatesBoundary(t *testing.T) {
+	s := loom.New()
+	pat, err := s.ParsePattern("knows(?x)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := []loom.Command{
+		loom.Evaluate{Term: loom.TermAtom{Payload: loom.NameAtom("Alice")}},
+		loom.Query{Pattern: pat},
+		loom.Define{Name: "a", Term: loom.TermAtom{Payload: loom.NameAtom("Alice")}},
+	}
+	writes := []loom.Command{
+		loom.Assert{Term: loom.TermAtom{Payload: loom.NameAtom("Alice")}},
+		loom.Retract{Claim: 1},
+		loom.Transaction{},
+	}
+	for _, c := range reads {
+		if loom.Mutates(c) {
+			t.Errorf("%T reported as a mutation", c)
+		}
+	}
+	for _, c := range writes {
+		if !loom.Mutates(c) {
+			t.Errorf("%T reported as a read", c)
+		}
 	}
 }
 
@@ -263,17 +355,25 @@ func TestKeywordsAreContextual(t *testing.T) {
 	`), "knows(assert)", "g(match)")
 }
 
-// An application's "(" only continues a term on its own line, so consecutive
-// statements do not silently fuse into one.
+// A newline ends a statement, and an unparenthesized application may only
+// continue on the same physical line. Explicit delimiters are how a term
+// deliberately spans lines.
 func TestStatementsAreLineDelimited(t *testing.T) {
 	s := loom.NewSession(loom.New())
 	wantLines(t, run(t, s, "x => x\n(x => x)(Alice)"), "x => x", "Alice")
 	wantLines(t, run(t, s, "knows\n(Alice)"), "knows", "Alice")
 
-	// Wrapping inside brackets still works, because those tokens share a line
-	// with the term they extend.
+	// Parentheses suspend the rule, so a term may span lines on purpose.
 	wantLines(t, run(t, s, "knows(\n  Alice\n)"), "knows(Alice)")
-	wantLines(t, run(t, s, "f = x =>\n  knows(x)\nf(Alice)"), "knows(Alice)")
+	wantLines(t, run(t, s, "f = (x =>\n  knows(x))\nf(Alice)"), "knows(Alice)")
+
+	// Without them, a statement that is incomplete at the newline is an error
+	// rather than a quiet continuation.
+	for _, src := range []string{"f = x =>\n  knows(x)", "f =\n  Alice", "assert\n  knows(Alice)(Bob)"} {
+		if _, err := s.Store().ParseProgram(src); err == nil {
+			t.Errorf("parsed %q across a newline, expected a syntax error", src)
+		}
+	}
 }
 
 func TestComments(t *testing.T) {

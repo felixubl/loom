@@ -49,6 +49,7 @@ Layout, one file per concern:
 | `value.go` | the canonical hash-consed value arena and the `Store` |
 | `term.go` | the term AST |
 | `parse.go` | surface syntax for terms, patterns and statements |
+| `resolve.go` | the phase between parsing and evaluation |
 | `eval.go` | values, closures, application, primitives, `Display` |
 | `world.go` | snapshots, claims, `holds` |
 | `match.go` | patterns and structural matching |
@@ -67,13 +68,25 @@ serve syntax.
 
 Invariants worth keeping:
 
-- An identifier is a `TermVar` when a lambda binds it and a `TermRef` otherwise,
-  and an undefined `TermRef` evaluates to the atom of its own name. That
-  fallback is load-bearing: it is what lets `identity` resolve while `knows`
-  stays inert in the same expression.
-- An application's `(` only continues a term on the same line. Without that,
+- Parsing decides nothing about names. `Parse` emits `TermName`; `Resolve`
+  turns each into `TermVar`, `TermDef` or `TermAtom` by the precedence
+  parameter > definition > base binding > atom. Evaluating a `TermName` is an
+  error. Do not move that decision back into the parser.
+- The atom fallback is load-bearing: it is what lets `identity` resolve while
+  `knows` stays inert in the same expression.
+- Scoping is lexical and must stay that way. A `Closure` carries its `Env`, and
+  applying one never consults the caller's environment. Top-level definitions
+  are cells created before any body is resolved, which is what gives recursion
+  and mutual recursion without dynamic lookup.
+- An intrinsic's identity is the value, not its name. `holds = x => x` rebinds
+  the name only. Compiled forms (Look, later) must hold the value from
+  `Store.Intrinsic`, never re-look-up the text.
+- A newline ends a statement and an unparenthesized application may only
+  continue on the same line. Only parentheses suspend this. Without it,
   consecutive statements fuse and `(x => x)(Alice)` becomes an argument to the
   line above.
+- `match` is on the read side, not the write side. `Mutates` is the boundary,
+  and it will matter for caching and reactivity.
 - `ValueID` is 1-based; zero means "no canonical identity". A `Neutral` with
   `ID == 0` is a legal value that is not persistable.
 - Lock order is arena before journal. Nothing takes the journal lock and then

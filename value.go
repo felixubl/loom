@@ -71,8 +71,8 @@ type Store struct {
 	atoms map[Payload]ValueID
 	apps  map[appKey]ValueID
 
-	prims sync.RWMutex
-	prim  map[ValueID]*Primitive
+	baseMu sync.RWMutex
+	base   *Env // the intrinsics, bound by name
 
 	journal   sync.RWMutex
 	claims    []Claim // index = ClaimID - 1
@@ -95,7 +95,6 @@ func NewWithLimits(l Limits) *Store {
 		limits:    l.withDefaults(),
 		atoms:     map[Payload]ValueID{},
 		apps:      map[appKey]ValueID{},
-		prim:      map[ValueID]*Primitive{},
 		byValue:   map[ValueID][]ClaimID{},
 		assertedI: map[ValueID]bool{},
 	}

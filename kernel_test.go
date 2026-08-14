@@ -44,10 +44,9 @@ func TestFormatRoundTrip(t *testing.T) {
 	}
 }
 
-// A free identifier is a reference, and a reference nothing defines evaluates
-// to the atom of its own name. That is what makes knows(Alice) graph structure
-// without anyone having declared knows.
-func TestFreeIdentifierIsAReferenceThatFallsBackToAnAtom(t *testing.T) {
+// Parse decides nothing about what a name denotes: it produces TermName, and
+// resolution turns each one into an atom, a variable, or a definition.
+func TestParseProducesUnresolvedNames(t *testing.T) {
 	term, err := loom.Parse("knows(Alice)")
 	if err != nil {
 		t.Fatal(err)
@@ -56,13 +55,59 @@ func TestFreeIdentifierIsAReferenceThatFallsBackToAnAtom(t *testing.T) {
 	if !ok {
 		t.Fatalf("got %T, want TermApply", term)
 	}
-	if _, ok := apply.Fn.(loom.TermRef); !ok {
-		t.Fatalf("function is %T, want TermRef", apply.Fn)
+	if _, ok := apply.Fn.(loom.TermName); !ok {
+		t.Fatalf("function is %T, want TermName", apply.Fn)
 	}
 
+	// Evaluating an unresolved term is an error: the phase was skipped.
 	s := loom.New()
+	if _, err := s.World().EvalIn(term, s.Base()); !errors.Is(err, loom.ErrUnresolvedName) {
+		t.Fatalf("got %v, want unresolved_name", err)
+	}
+
+	// Resolved with nothing in scope, both names become atoms.
+	resolved, err := loom.Resolve(term, s.Base())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := resolved.(loom.TermApply).Fn.(loom.TermAtom); !ok {
+		t.Fatalf("resolved function is %T, want TermAtom", resolved.(loom.TermApply).Fn)
+	}
 	if got := eval(t, s.World(), "knows(Alice)"); got != "knows(Alice)" {
 		t.Fatalf("got %q, want knows(Alice)", got)
+	}
+}
+
+// An intrinsic's identity is the value, not the name it is bound under.
+func TestIntrinsicIdentityIsIndependentOfItsName(t *testing.T) {
+	s := loom.NewSession(loom.New())
+	run(t, s, "assert knows(Alice)(Bob)")
+	wantLines(t, run(t, s, "holds(knows(Alice)(Bob))"), "true")
+
+	intrinsic, ok := s.Store().Intrinsic("holds")
+	if !ok {
+		t.Fatal("no holds intrinsic in the base environment")
+	}
+
+	// Rebinding the name shadows the binding, not the intrinsic.
+	wantLines(t, run(t, s, `
+		holds = x => shadowed
+		holds(knows(Alice)(Bob))
+	`), "shadowed")
+
+	if again, ok := s.Store().Intrinsic("holds"); !ok || again != intrinsic {
+		t.Fatal("rebinding the name changed the intrinsic")
+	}
+
+	// Applying the intrinsic value directly still reads the world, which is how
+	// a compiled form should reach it.
+	fact := valueOf(t, s.Store(), "knows(Alice)(Bob)")
+	answer, err := s.Store().World().Apply(intrinsic, loom.Atom{ID: fact})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Store().Display(answer); got != "true" {
+		t.Fatalf("got %q, want true", got)
 	}
 }
 

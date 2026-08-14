@@ -1,18 +1,39 @@
-# Loom surface syntax v0
+# Loom surface syntax and resolution v0
 
-Status: descriptive. [`loom-v0-spec.md`](loom-v0-spec.md) is the normative
-document and defines the semantics. This describes how a human writes them down.
+Status: normative for syntax, name resolution, and scoping.
+[`loom-v0-spec.md`](loom-v0-spec.md) is normative for semantics and takes
+precedence wherever the two meet.
 
 Two different languages are involved and confusing them makes everything harder.
-Go is the *host* language: it implements the interpreter and a user never needs
-to know it exists. Loom is the language described here. Nothing below adds
-meaning to the kernel. Every construct either denotes a term the kernel already
-has, or is a command the kernel already defines (§28).
+Go is the *host*: it implements the interpreter, and a user never needs to know
+it exists. Loom is the language described here.
+
+Nothing below adds meaning to the kernel. Every construct either denotes a term
+the kernel already has, or is a command the kernel already defines (§28). The
+governing discipline is that **surface syntax may grow without the semantic
+kernel growing**.
+
+## The pipeline
+
+```
+source
+  ↓ parse
+Name / Atom / Lambda / Apply
+  ↓ collect top-level definitions
+  ↓ resolve
+Atom / Var / Def / Lambda / Apply
+  ↓ evaluate
+Atom / Closure / Intrinsic / NeutralApplication
+```
+
+Parsing decides nothing about what a name denotes, because that is not a
+syntactic question. Resolution is a separate phase, and it is what makes scoping
+lexical.
 
 ## Terms
 
 ```
-term := atom | variable | reference | variable "=>" term | term "(" term ")"
+term := atom | name | name "=>" term | term "(" term ")"
 ```
 
 Four things, and that is all:
@@ -37,15 +58,55 @@ Alice   knows   task   42   "hello"   true   false
 The kernel needs no separate categories for these (§5). The tag on a literal
 exists only so the name `42` and the string `"42"` stay different atoms.
 
-## Names
+## Lines
 
-An identifier is a **variable** when an enclosing lambda binds it, and a
-**reference** otherwise. A reference that nothing defines evaluates to the atom
-of its own name.
+Normative:
 
-That single rule is what lets computation and graph construction share one
-syntax. In this program `identity` resolves to a function and `knows` stays
-inert, with nothing distinguishing them at the call site:
+> An unparenthesized application may only continue on the same physical line. A
+> newline terminates the current statement. Explicit delimiters may span lines.
+
+This avoids semicolon insertion games while keeping multiline expressions
+possible when they are deliberately grouped.
+
+```
+knows(Alice)         one statement
+
+knows                two statements: the second is (Alice)
+(Alice)
+
+knows(               one statement: the parentheses are explicit
+    Alice
+)
+
+f = (x =>            one statement, deliberately grouped
+    knows(x))
+```
+
+A statement that is incomplete when the newline arrives is a syntax error, not a
+quiet continuation:
+
+```
+f = x =>             error: expected a term, found end of line
+    knows(x)
+```
+
+Only parentheses suspend the rule. A `transaction { … }` block still takes one
+statement per line.
+
+`#` begins a comment that runs to the end of the line.
+
+## Name resolution
+
+Normative precedence for a bare name:
+
+1. a lexically bound lambda parameter
+2. a top-level definition in scope
+3. a base-environment binding, such as an intrinsic
+4. otherwise, the atom of that name
+
+Step 4 is what lets computation and graph construction share one notation. In
+this program `identity` resolves to a function and `knows` falls through to an
+atom, with nothing distinguishing them at the call site:
 
 ```
 identity = x => x
@@ -57,6 +118,34 @@ knows(Alice)(Bob)      → knows(Alice)(Bob)
 
 Reduction simply runs out when it reaches something with no reduction behavior,
 and what is left is graph structure.
+
+## Scoping is lexical
+
+A closure captures the environment it was defined in, and that environment
+travels with it. Applying a function never resolves its free names against the
+caller's environment.
+
+```
+helper = x => A
+f      = x => helper(x)
+g      = f
+```
+
+Rebinding `helper` afterwards does not reach into `g`:
+
+```
+helper = x => B
+
+g(Alice)          → A
+helper(Alice)     → B
+```
+
+A function means what it meant where it was defined. This matters more in Loom
+than in most languages, because long-lived computation is meant to sit beside
+long-lived graph state.
+
+Redefining a name shadows it rather than overwriting it, which is the same rule
+seen from the other side.
 
 ## Definitions
 
@@ -73,23 +162,42 @@ constant = x => y => x
 friend   = x => y => knows(x)(y)
 ```
 
-A definition may refer to itself, because references resolve when a closure is
-applied rather than when it is written:
+Every top-level name in a program is collected before any body is resolved, so a
+definition may refer to one written further down, and two may refer to each
+other:
+
+```
+a = b
+b = Alice          a is Alice
+
+even = n => odd(n)
+odd  = n => reached(n)
+```
+
+Recursion needs no special form and no dynamic lookup, because a definition's
+cell exists before its term is evaluated:
 
 ```
 loop = x => loop(x)
 ```
 
-That terminates only by hitting the evaluation limits (§35), which is the
+That terminates only by reaching the evaluation limits (§35), which is the
 correct outcome for a Turing-complete language.
 
-Definitions are runtime bindings. v0 does not persist them: source-code and
-function persistence are non-goals (§2), and closures are not persistable
-values (§13).
+A definition that depends on its own *value* rather than merely on its own name
+is an error, not a hang:
 
-A definition shadows the atom of the same name, so defining `Alice` changes what
-`knows(Alice)` means. Definitions also shadow primitives, so defining `holds`
-replaces it.
+```
+a = b
+b = a              cyclic_definition
+```
+
+Defining the same name twice in one program is `duplicate_definition`. Across
+separate statements it is ordinary shadowing.
+
+Definitions are runtime bindings. v0 does not persist them: source-code and
+function persistence are non-goals (§2), and closures are not persistable values
+(§13).
 
 ## Functions build graph values
 
@@ -106,9 +214,53 @@ friend(Alice)(Bob)     → knows(Alice)(Bob)
 Both lambdas reduce, then reduction stops because `knows` is inert. A function
 has constructed a persistable fact, using nothing but ordinary application.
 
-## Commands
+## Intrinsics
 
-Mutation is deliberately not an expression (§28, §33). Writes are commands.
+Host reduction behavior is a first-class value, and its **identity is the value,
+not the name it is bound under**. The base environment starts out binding
+`holds` to the holds intrinsic.
+
+Rebinding the name is legal and rebinds only the name:
+
+```
+holds = x => x
+```
+
+The intrinsic still exists and still means what it meant. Nothing that was
+compiled against it changes.
+
+This is the boundary between language names and semantic primitives. Anything
+compiled should hold the intrinsic value rather than look up the text of a name.
+When Look lowers
+
+```
+[Alice] >[knows] [Bob] ?
+```
+
+it should produce
+
+```
+Intrinsic.HOLDS(knows(Alice)(Bob))
+```
+
+and never `Ref("holds")(…)`, so that a program defining `holds = x => false`
+cannot make Look queries stop working.
+
+Namespaced access to shadowed intrinsics (`core.holds`) is a later concern. v0
+does not add syntax for it.
+
+## Reads and writes
+
+The two sides of the language are deliberately separate.
+
+| Side | Constructs | Rule |
+| --- | --- | --- |
+| Read | expressions, `holds`, `match` | evaluate against one world snapshot, change nothing |
+| Write | `assert`, `retract`, `transaction` | the only things that change anything |
+
+`match` has its own statement syntax, but it is a read: it evaluates against a
+snapshot and is repeatable. It is not a mutation command. That boundary will
+matter for caching and reactivity.
 
 ```
 command := "assert" term
@@ -134,8 +286,7 @@ one exact claim, not every assertion of a value (§30). A transaction publishes
 all of its commands or none of them, and a later command inside one observes an
 earlier one (§31, §32).
 
-Reading the world is *not* a command. `holds` is an ordinary primitive, so it
-composes like anything else:
+Reading the world is not a command, so `holds` composes like anything else:
 
 ```
 answer = holds(knows(Alice)(Bob))
@@ -160,11 +311,7 @@ requires both positions to match the same value.
 ## Programs
 
 A program is a sequence of statements, each a definition, a command, or a bare
-expression. Statements need no separator. A term ends as soon as the next token
-cannot continue it, and an application's `(` only continues a term on the same
-line, so a line beginning with `(` starts a new statement.
-
-`#` begins a comment that runs to the end of the line.
+expression.
 
 ```
 # A tiny complete program.
@@ -204,6 +351,12 @@ loom program.loom      run a program, then exit
 loom -i program.loom   run a program, then continue interactively
 ```
 
+Each REPL line is its own program, so a statement cannot see a name introduced
+after it. Typing `f = x => helper(x)` before `helper` exists resolves `helper`
+to an atom, and defining `helper` afterwards does not change `f`. That is the
+same static resolution rule everywhere else benefits from. Put forward or
+mutually recursive definitions in one file and load it with `loom -i`.
+
 ## What is deliberately absent
 
 No operators, `if`, blocks, loops, classes, methods, or `let`. No arithmetic:
@@ -225,9 +378,6 @@ would lower to
 ```
 f = x => (y => add(y)(y))(expensive(x))
 ```
-
-The discipline is that surface syntax may grow without the semantic kernel
-growing.
 
 Look is the other notation that will sit beside this one. It describes the same
 values for a different reason:

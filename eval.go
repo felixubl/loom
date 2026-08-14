@@ -28,27 +28,47 @@ type Neutral struct {
 }
 
 // Closure is a function value over its captured lexical environment (§6).
-// Closures are runtime values and are not persistable (§13); v0 deliberately
-// defines no equality for them (§16).
+//
+// The environment travels with the closure. Applying one never resolves its
+// free names against the caller's environment, so a function means what it
+// meant where it was defined. Closures are not persistable (§13), and v0
+// deliberately defines no equality for them (§16).
 type Closure struct {
 	Param string
 	Body  Term
 	Env   *Env
 }
 
-// partial is a primitive that has received some but not all of its arguments.
-// It exists so a primitive of arity greater than one still participates
+// Intrinsic is host reduction behavior as a first-class value.
+//
+// Its identity is the value, not the name it happens to be bound under. The
+// base environment binds holds to the holds intrinsic, but a program that
+// writes `holds = x => x` rebinds only that name: the intrinsic still exists
+// and still means what it meant. Anything compiled, Look included, should hold
+// the intrinsic value rather than look up the text of its name.
+type Intrinsic struct {
+	name string
+	prim *Primitive
+}
+
+// Name returns the name the base environment binds this intrinsic under. It is
+// a label for display, not the intrinsic's identity.
+func (i Intrinsic) Name() string { return i.name }
+
+// partial is an intrinsic that has received some but not all of its arguments.
+// It exists so an intrinsic of arity greater than one still participates
 // through ordinary one-argument application (§11).
 type partial struct {
-	atom ValueID
+	name string
 	prim *Primitive
 	args []Value
 }
 
-func (Atom) value()     {}
-func (Neutral) value()  {}
-func (*Closure) value() {}
-func (*partial) value() {}
+func (Atom) value()      {}
+func (Neutral) value()   {}
+func (*Closure) value()  {}
+func (Intrinsic) value() {}
+func (*partial) value()  {}
 
 // persistID returns the canonical identity of a persistable value, or zero if
 // the value is not persistable (§13).
@@ -75,8 +95,10 @@ func describe(v Value) string {
 	switch v.(type) {
 	case *Closure:
 		return "closure"
+	case Intrinsic:
+		return "intrinsic"
 	case *partial:
-		return "partially applied primitive"
+		return "partially applied intrinsic"
 	case Neutral:
 		return "application over a non-persistable value"
 	case nil:
@@ -112,8 +134,10 @@ func (s *Store) display(b *strings.Builder, v Value) {
 		b.WriteString(x.Param)
 		b.WriteString(" => ")
 		formatTerm(b, x.Body)
+	case Intrinsic:
+		b.WriteString(x.name)
 	case *partial:
-		b.WriteString(s.Source(x.atom))
+		b.WriteString(x.name)
 		for _, arg := range x.args {
 			b.WriteByte('(')
 			s.display(b, arg)
@@ -126,48 +150,89 @@ func (s *Store) display(b *strings.Builder, v Value) {
 	}
 }
 
-// Env is a lexical environment: a chain of parameter bindings. Binding by
-// environment rather than substitution is what keeps capture correct (§8).
+// Env is a lexical environment: a chain of bindings that a closure captures.
+//
+// It holds two kinds of binding. A value binding is a lambda parameter or a
+// base-environment name, and is already evaluated. A definition binding is a
+// cell that exists before its term is evaluated, which is what lets top-level
+// definitions be recursive and refer to each other.
 type Env struct {
 	name   string
 	value  Value
+	def    *definition
 	parent *Env
 }
 
-// Bind returns an environment extending e with one binding. The nil Env is the
-// empty environment.
+// Bind returns an environment extending e with one value binding. The nil Env
+// is the empty environment.
 func (e *Env) Bind(name string, v Value) *Env {
 	return &Env{name: name, value: v, parent: e}
 }
 
-// Lookup finds the innermost binding of name.
-func (e *Env) Lookup(name string) (Value, bool) {
-	for ; e != nil; e = e.parent {
-		if e.name == name {
-			return e.value, true
-		}
-	}
-	return nil, false
+func (e *Env) bindDef(d *definition) *Env {
+	return &Env{name: d.name, def: d, parent: e}
 }
 
-// Context is what a primitive gets: the store it may intern into and the world
+func (e *Env) find(name string) *Env {
+	for ; e != nil; e = e.parent {
+		if e.name == name {
+			return e
+		}
+	}
+	return nil
+}
+
+// Lookup finds the innermost binding of name. A top-level definition that has
+// not been evaluated yet is not yet a value, so this reports false for it;
+// evaluation forces such a cell instead.
+func (e *Env) Lookup(name string) (Value, bool) {
+	b := e.find(name)
+	if b == nil {
+		return nil, false
+	}
+	if b.def != nil {
+		if b.def.state != defReady {
+			return nil, false
+		}
+		return b.def.value, true
+	}
+	return b.value, true
+}
+
+// Names returns every name the environment binds, innermost first, with
+// shadowed bindings omitted.
+func (e *Env) Names() []string {
+	var out []string
+	seen := map[string]bool{}
+	for ; e != nil; e = e.parent {
+		if !seen[e.name] {
+			seen[e.name] = true
+			out = append(out, e.name)
+		}
+	}
+	return out
+}
+
+// Context is what an intrinsic gets: the store it may intern into and the world
 // snapshot it may read (§17).
 type Context struct {
 	Store *Store
 	World World
 }
 
-// Primitive is host reduction behavior attached to an atom (§11). It is an
-// optimization and a host boundary, not an alternate calculus: a primitive is
-// applied one argument at a time like anything else and only fires once Arity
-// arguments have arrived.
+// Primitive is host reduction behavior (§11). It is an optimization and a host
+// boundary, not an alternate calculus: an intrinsic is applied one argument at
+// a time like anything else and only fires once Arity arguments have arrived.
 type Primitive struct {
 	Arity int
 	Apply func(ctx *Context, args []Value) (Value, error)
 }
 
-// Register attaches reduction behavior to the name atom. It replaces any
-// primitive already registered under that name.
+// Register binds an intrinsic into the store's base environment. It replaces
+// any binding already made under that name.
+//
+// Sessions capture the base environment when they are created, so registering
+// after a session exists does not reach into it.
 func (s *Store) Register(name string, p Primitive) error {
 	if p.Arity < 1 {
 		return errorf(PrimitiveError, "%s: arity must be at least 1", name)
@@ -175,22 +240,36 @@ func (s *Store) Register(name string, p Primitive) error {
 	if p.Apply == nil {
 		return errorf(PrimitiveError, "%s: no implementation", name)
 	}
-	id := s.Atom(NameAtom(name))
-	s.prims.Lock()
-	defer s.prims.Unlock()
-	s.prim[id] = &p
+	s.baseMu.Lock()
+	defer s.baseMu.Unlock()
+	s.base = s.base.Bind(name, Intrinsic{name: name, prim: &p})
 	return nil
 }
 
-func (s *Store) primitive(id ValueID) (*Primitive, bool) {
-	s.prims.RLock()
-	defer s.prims.RUnlock()
-	p, ok := s.prim[id]
-	return p, ok
+// Base returns the environment holding the intrinsics. It is the root every
+// session and every bare evaluation chains onto.
+func (s *Store) Base() *Env {
+	s.baseMu.RLock()
+	defer s.baseMu.RUnlock()
+	return s.base
+}
+
+// Intrinsic returns the intrinsic value bound under a name. Compiled forms
+// should hold this value rather than look the name up later, so that rebinding
+// the name cannot change what they mean.
+func (s *Store) Intrinsic(name string) (Value, bool) {
+	v, ok := s.Base().Lookup(name)
+	if !ok {
+		return nil, false
+	}
+	if _, isIntrinsic := v.(Intrinsic); !isIntrinsic {
+		return nil, false
+	}
+	return v, true
 }
 
 func registerBuiltins(s *Store) {
-	// holds is the only primitive v0 ships. It is the world-snapshot layer's
+	// holds is the only intrinsic v0 ships. It is the world-snapshot layer's
 	// single read operation (§3, §19); match is a host API instead, because
 	// returning a set of bindings needs values v0 does not have yet (§2).
 	_ = s.Register("holds", Primitive{Arity: 1, Apply: func(ctx *Context, args []Value) (Value, error) {
@@ -202,39 +281,40 @@ func registerBuiltins(s *Store) {
 	}})
 }
 
-// Eval evaluates a term against this world snapshot. Every read the evaluation
-// performs observes this one snapshot (§17).
+// Eval resolves a term against the store's base environment and evaluates it
+// there. Every read it performs observes this one snapshot (§17).
 //
-// No definitions are in scope, so every reference falls back to the atom of its
-// name. Use Session to evaluate against a program's definitions.
+// No definitions are in scope, so a name the base environment does not bind
+// becomes the atom of that name. Use Session to evaluate against a program's
+// definitions.
 func (w World) Eval(t Term) (Value, error) {
-	return w.EvalWith(t, nil, nil)
+	base := w.store.Base()
+	resolved, err := Resolve(t, base)
+	if err != nil {
+		return nil, err
+	}
+	return w.EvalIn(resolved, base)
 }
 
-// EvalIn evaluates a term in an explicit environment, which is what a caller
-// needs to apply a closure it is holding.
+// EvalIn evaluates an already-resolved term in an explicit environment. Pass a
+// term through Resolve first; an unresolved name here is an error.
 func (w World) EvalIn(t Term, env *Env) (Value, error) {
-	return w.EvalWith(t, env, nil)
-}
-
-// EvalWith evaluates a term in an explicit environment and against an explicit
-// set of top-level definitions. A nil Definitions means none are in scope.
-func (w World) EvalWith(t Term, env *Env, defs *Definitions) (Value, error) {
-	e := &evaluator{store: w.store, world: w, limits: w.store.limits, defs: defs}
-	return e.eval(t, env, 0)
+	return w.evaluator().eval(t, env, 0)
 }
 
 // Apply applies one runtime value to another against this world snapshot.
 func (w World) Apply(fn, arg Value) (Value, error) {
-	e := &evaluator{store: w.store, world: w, limits: w.store.limits}
-	return e.apply(fn, arg, 0)
+	return w.evaluator().apply(fn, arg, 0)
+}
+
+func (w World) evaluator() *evaluator {
+	return &evaluator{store: w.store, world: w, limits: w.store.limits}
 }
 
 type evaluator struct {
 	store  *Store
 	world  World
 	limits Limits
-	defs   *Definitions
 	steps  int
 }
 
@@ -256,22 +336,30 @@ func (e *evaluator) eval(t Term, env *Env, depth int) (Value, error) {
 	switch x := t.(type) {
 	case TermAtom:
 		return Atom{ID: e.store.Atom(x.Payload)}, nil
+
 	case TermVar:
-		v, ok := env.Lookup(x.Name)
-		if !ok {
+		b := env.find(x.Name)
+		if b == nil {
 			return nil, errorf(UnboundVariable, "%s", x.Name)
 		}
-		return v, nil
-	case TermRef:
-		// A name nothing defines is not an error: it is the atom of that name.
-		// This is the kernel staying permissive (§34), and it is what makes
-		// knows(Alice)(Bob) graph structure without anyone declaring knows.
-		if v, ok := e.defs.Lookup(x.Name); ok {
-			return v, nil
+		if b.def != nil {
+			return e.force(b.def, depth)
 		}
-		return Atom{ID: e.store.Atom(NameAtom(x.Name))}, nil
+		return b.value, nil
+
+	case TermDef:
+		b := env.find(x.Name)
+		if b == nil || b.def == nil {
+			return nil, errorf(UnboundVariable, "definition %s", x.Name)
+		}
+		return e.force(b.def, depth)
+
+	case TermName:
+		return nil, errorf(UnresolvedName, "%s: pass the term through Resolve first", x.Name)
+
 	case TermLambda:
 		return &Closure{Param: x.Param, Body: x.Body, Env: env}, nil
+
 	case TermApply:
 		// Call by value: the function, then the argument, then the application
 		// (§7). Evaluating the argument first is what makes
@@ -289,6 +377,29 @@ func (e *evaluator) eval(t Term, env *Env, depth int) (Value, error) {
 	return nil, errorf(PrimitiveError, "not a term: %T", t)
 }
 
+// force evaluates a definition's term the first time anything reads it. A cell
+// read while it is already being forced is a definition that depends on its own
+// value rather than merely on its own name.
+func (e *evaluator) force(d *definition, depth int) (Value, error) {
+	switch d.state {
+	case defReady:
+		return d.value, nil
+	case defForcing:
+		return nil, errorf(CyclicDefinition, "%s depends on its own value", d.name)
+	}
+	if d.term == nil {
+		return nil, errorf(UnboundVariable, "definition %s has no term", d.name)
+	}
+	d.state = defForcing
+	v, err := e.eval(d.term, d.env, depth+1)
+	if err != nil {
+		d.state = defPending
+		return nil, err
+	}
+	d.value, d.state = v, defReady
+	return v, nil
+}
+
 func (e *evaluator) apply(fn, arg Value, depth int) (Value, error) {
 	if err := e.step(depth); err != nil {
 		return nil, err
@@ -296,12 +407,10 @@ func (e *evaluator) apply(fn, arg Value, depth int) (Value, error) {
 	switch f := fn.(type) {
 	case *Closure:
 		return e.eval(f.Body, f.Env.Bind(f.Param, arg), depth+1)
+	case Intrinsic:
+		return e.feed(&partial{name: f.name, prim: f.prim}, arg)
 	case *partial:
 		return e.feed(f, arg)
-	case Atom:
-		if p, ok := e.store.primitive(f.ID); ok {
-			return e.feed(&partial{atom: f.ID, prim: p}, arg)
-		}
 	}
 	return e.neutralize(fn, arg)
 }
@@ -311,7 +420,7 @@ func (e *evaluator) feed(p *partial, arg Value) (Value, error) {
 	copy(args, p.args)
 	args = append(args, arg)
 	if len(args) < p.prim.Arity {
-		return &partial{atom: p.atom, prim: p.prim, args: args}, nil
+		return &partial{name: p.name, prim: p.prim, args: args}, nil
 	}
 	v, err := p.prim.Apply(&Context{Store: e.store, World: e.world}, args)
 	if err != nil {
@@ -319,10 +428,10 @@ func (e *evaluator) feed(p *partial, arg Value) (Value, error) {
 		if errors.As(err, &semantic) {
 			return nil, err
 		}
-		return nil, errorf(PrimitiveError, "%s: %s", e.store.Source(p.atom), err)
+		return nil, errorf(PrimitiveError, "%s: %s", p.name, err)
 	}
 	if v == nil {
-		return nil, errorf(PrimitiveError, "%s returned no value", e.store.Source(p.atom))
+		return nil, errorf(PrimitiveError, "%s returned no value", p.name)
 	}
 	return v, nil
 }

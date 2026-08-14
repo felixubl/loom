@@ -64,10 +64,11 @@ answer = holds(friend(Alice)(Bob))
 match knows(?who)(?whom)
 ```
 
-An identifier is a variable when an enclosing lambda binds it, and a reference
-otherwise. A reference nothing defines evaluates to the atom of its own name.
-That one rule is why computation and graph construction need no separate
-notation:
+Parsing decides nothing about what a name means. A separate resolution phase
+does, in this order: a lambda parameter, then a top-level definition, then a
+base-environment binding such as an intrinsic, and otherwise the atom of that
+name. That last fallback is why computation and graph construction need no
+separate notation:
 
 ```
 friend                 → x => y => knows(x)(y)
@@ -77,6 +78,11 @@ friend(Alice)(Bob)     → knows(Alice)(Bob)
 
 Both lambdas reduce, then reduction stops because `knows` is inert. A function
 just built a persistable fact out of ordinary application.
+
+Scoping is lexical. A closure carries the environment it was defined in, so
+rebinding a name a function uses cannot change what that function means. Top-
+level definitions are collected before any body is resolved, which is what makes
+them recursive and mutually recursive without any dynamic lookup.
 
 There are no operators, no `if`, no blocks, no loops, and no `let`. No
 arithmetic either: write `add(2)(3)`, not `2 + 3`. Those are all future surface
@@ -119,7 +125,7 @@ more. It is implemented and every conformance case in the specification passes.
 
 Built:
 
-- atoms, variables, references, lambdas, call-by-value application
+- atoms, lambdas, call-by-value application
 - closures, with lexical capture by environment
 - neutral (symbolic) applications
 - structural equality by hash-consed canonical interning
@@ -129,6 +135,8 @@ Built:
 - transactions with staged visibility
 - resource limits on steps, depth, value size and result count
 - a source language with definitions and commands, a script runner, and a REPL
+- two-phase resolution, lexical closures, and letrec top-level definitions
+- intrinsics whose identity is independent of the name they are bound under
 
 Deliberately not built: arithmetic, `if`, lists, sets, `map`/`filter`/`fold`,
 traversal, reactivity, temporal validity, query planning, schemas, properties,
@@ -197,6 +205,9 @@ The kernel keeps three things apart, and the separation is normative.
 | Term | atom, lambda, application | pure, never mutates |
 | World snapshot | `holds`, `match` | reads one consistent snapshot |
 | Transaction | `assert`, `retract` | the only way anything changes |
+
+`match` has its own statement syntax but sits on the read side: it evaluates
+against a snapshot and changes nothing.
 
 Because writes are commands rather than expressions, they cannot vanish because
 a value went unused, run twice because a thunk was forced twice, reorder because

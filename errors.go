@@ -19,6 +19,9 @@ const (
 	ResourceLimit         Code = "resource_limit"
 	PrimitiveError        Code = "primitive_error"
 	UnknownValue          Code = "unknown_value"
+	UnresolvedName        Code = "unresolved_name"
+	CyclicDefinition      Code = "cyclic_definition"
+	DuplicateDefinition   Code = "duplicate_definition"
 )
 
 // Error is a semantic error carrying one of the codes above.
@@ -52,6 +55,9 @@ var (
 	ErrResourceLimit         = &Error{Code: ResourceLimit}
 	ErrPrimitiveError        = &Error{Code: PrimitiveError}
 	ErrUnknownValue          = &Error{Code: UnknownValue}
+	ErrUnresolvedName        = &Error{Code: UnresolvedName}
+	ErrCyclicDefinition      = &Error{Code: CyclicDefinition}
+	ErrDuplicateDefinition   = &Error{Code: DuplicateDefinition}
 )
 
 func errorf(code Code, format string, args ...any) *Error {

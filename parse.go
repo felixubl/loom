@@ -34,10 +34,12 @@ func Parse(src string) (Term, error) {
 		return nil, err
 	}
 	p := &parser{toks: toks}
+	p.skipLines()
 	t, err := p.term(0)
 	if err != nil {
 		return nil, err
 	}
+	p.skipLines()
 	if p.peek().kind != tokEOF {
 		return nil, &SyntaxError{Pos: p.peek().pos, Msg: "unexpected " + p.peek().describe()}
 	}
@@ -56,10 +58,12 @@ func (s *Store) ParsePattern(src string) (Pattern, error) {
 		return nil, err
 	}
 	p := &parser{toks: toks, store: s}
+	p.skipLines()
 	pat, err := p.pattern(0)
 	if err != nil {
 		return nil, err
 	}
+	p.skipLines()
 	if p.peek().kind != tokEOF {
 		return nil, &SyntaxError{Pos: p.peek().pos, Msg: "unexpected " + p.peek().describe()}
 	}
@@ -81,6 +85,7 @@ const (
 	tokBraceOpen
 	tokBraceClose
 	tokColon
+	tokNewline
 )
 
 type token struct {
@@ -111,27 +116,42 @@ func (t token) describe() string {
 		return `"}"`
 	case tokColon:
 		return `":"`
+	case tokNewline:
+		return "end of line"
 	}
 	return strconv.Quote(t.text)
 }
 
 func lex(src string) ([]token, error) {
 	var toks []token
-	i, line := 0, 1
+	i, line, parens := 0, 1, 0
 	emit := func(t token) { t.line = line; toks = append(toks, t) }
+	// A newline ends a statement, except inside parentheses: explicit
+	// delimiters are how a term deliberately spans lines. Runs of blank lines
+	// collapse into one terminator.
+	endLine := func(at int) {
+		if parens == 0 && len(toks) > 0 && toks[len(toks)-1].kind != tokNewline {
+			emit(token{kind: tokNewline, pos: at})
+		}
+	}
 	for i < len(src) {
 		c := src[i]
 		switch {
 		case c == '\n':
+			endLine(i)
 			line++
 			i++
 		case c == ' ' || c == '\t' || c == '\r':
 			i++
 		case c == '(':
 			emit(token{kind: tokOpen, pos: i})
+			parens++
 			i++
 		case c == ')':
 			emit(token{kind: tokClose, pos: i})
+			if parens > 0 {
+				parens--
+			}
 			i++
 		case c == '?':
 			emit(token{kind: tokQuery, pos: i})
@@ -180,6 +200,7 @@ func lex(src string) ([]token, error) {
 			return nil, &SyntaxError{Pos: i, Msg: "unexpected character " + strconv.QuoteRune(rune(c))}
 		}
 	}
+	endLine(len(src))
 	emit(token{kind: tokEOF, pos: len(src)})
 	return toks, nil
 }
@@ -233,11 +254,18 @@ func isIdentPart(src string, i int) bool {
 type parser struct {
 	toks  []token
 	i     int
-	bound []string
 	store *Store
 }
 
-func (p *parser) peek() token         { return p.toks[p.i] }
+func (p *parser) peek() token { return p.toks[p.i] }
+
+// skipLines steps over statement terminators, at the points where a new
+// statement may begin.
+func (p *parser) skipLines() {
+	for p.at(tokNewline) {
+		p.i++
+	}
+}
 func (p *parser) next() token         { t := p.toks[p.i]; p.i++; return t }
 func (p *parser) at(k tokenKind) bool { return p.toks[p.i].kind == k }
 
@@ -256,15 +284,6 @@ func (p *parser) continuesLine() bool {
 	return p.i > 0 && p.toks[p.i].line == p.toks[p.i-1].line
 }
 
-func (p *parser) isBound(name string) bool {
-	for i := len(p.bound) - 1; i >= 0; i-- {
-		if p.bound[i] == name {
-			return true
-		}
-	}
-	return false
-}
-
 func (p *parser) term(depth int) (Term, error) {
 	if depth > maxNesting {
 		return nil, &SyntaxError{Pos: p.peek().pos, Msg: "nested too deeply"}
@@ -272,9 +291,7 @@ func (p *parser) term(depth int) (Term, error) {
 	if p.at(tokIdent) && p.toks[p.i+1].kind == tokArrow {
 		param := p.next().text
 		p.next() // "=>"
-		p.bound = append(p.bound, param)
 		body, err := p.term(depth + 1)
-		p.bound = p.bound[:len(p.bound)-1]
 		if err != nil {
 			return nil, err
 		}
@@ -316,10 +333,7 @@ func (p *parser) primary(depth int) (Term, error) {
 		return inner, nil
 	case tokIdent:
 		p.next()
-		if p.isBound(t.text) {
-			return TermVar{Name: t.text}, nil
-		}
-		return TermRef{Name: t.text}, nil
+		return TermName{Name: t.text}, nil
 	case tokInt:
 		p.next()
 		return TermAtom{Payload: IntAtom(t.num)}, nil
@@ -410,7 +424,7 @@ func (s *Store) ParseProgram(src string) (*Program, error) {
 		return nil, err
 	}
 	prog := &Program{}
-	for !p.at(tokEOF) {
+	for p.skipLines(); !p.at(tokEOF); p.skipLines() {
 		c, err := p.statement(0)
 		if err != nil {
 			return nil, err
@@ -426,10 +440,12 @@ func (s *Store) ParseCommand(src string) (Command, error) {
 	if err != nil {
 		return nil, err
 	}
+	p.skipLines()
 	c, err := p.statement(0)
 	if err != nil {
 		return nil, err
 	}
+	p.skipLines()
 	if !p.at(tokEOF) {
 		return nil, &SyntaxError{Pos: p.peek().pos, Msg: "unexpected " + p.peek().describe()}
 	}
@@ -500,7 +516,7 @@ func (p *parser) transaction(depth int) (Command, error) {
 		return nil, err
 	}
 	tx := Transaction{}
-	for !p.at(tokBraceClose) {
+	for p.skipLines(); !p.at(tokBraceClose); p.skipLines() {
 		if p.at(tokEOF) {
 			return nil, &SyntaxError{Pos: p.peek().pos, Msg: `unterminated transaction, expected "}"`}
 		}
@@ -549,9 +565,11 @@ func formatTerm(b *strings.Builder, t Term) {
 	switch x := t.(type) {
 	case TermAtom:
 		sourceAtom(b, x.Payload)
+	case TermName:
+		b.WriteString(x.Name)
 	case TermVar:
 		b.WriteString(x.Name)
-	case TermRef:
+	case TermDef:
 		b.WriteString(x.Name)
 	case TermLambda:
 		b.WriteString(x.Param)
