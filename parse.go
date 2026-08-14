@@ -18,9 +18,16 @@ const maxNesting = 512
 // Application associates left, so f(x)(y) means (f(x))(y). There is no
 // multi-argument call.
 //
-// An identifier is a variable when an enclosing lambda binds it and an atom
-// otherwise, which is why knows(Alice) is two atoms while x => x is a lambda
-// over a variable. Parse is store-free: it produces syntax, not values.
+// An identifier is a variable when an enclosing lambda binds it and a reference
+// otherwise. A reference nothing defines evaluates to the atom of its own name,
+// which is why knows(Alice) is graph structure while x => x is a lambda over a
+// variable.
+//
+// An application's "(" only continues a term on the same line, so a line
+// beginning with "(" starts a new term rather than becoming an argument to the
+// line above.
+//
+// Parse is store-free: it produces syntax, not values.
 func Parse(src string) (Term, error) {
 	toks, err := lex(src)
 	if err != nil {
@@ -70,6 +77,10 @@ const (
 	tokClose
 	tokArrow
 	tokQuery
+	tokAssign
+	tokBraceOpen
+	tokBraceClose
+	tokColon
 )
 
 type token struct {
@@ -77,6 +88,7 @@ type token struct {
 	text string
 	num  int64
 	pos  int
+	line int
 }
 
 func (t token) describe() string {
@@ -91,43 +103,71 @@ func (t token) describe() string {
 		return `"=>"`
 	case tokQuery:
 		return `"?"`
+	case tokAssign:
+		return `"="`
+	case tokBraceOpen:
+		return `"{"`
+	case tokBraceClose:
+		return `"}"`
+	case tokColon:
+		return `":"`
 	}
 	return strconv.Quote(t.text)
 }
 
 func lex(src string) ([]token, error) {
 	var toks []token
-	i := 0
+	i, line := 0, 1
+	emit := func(t token) { t.line = line; toks = append(toks, t) }
 	for i < len(src) {
 		c := src[i]
 		switch {
-		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+		case c == '\n':
+			line++
+			i++
+		case c == ' ' || c == '\t' || c == '\r':
 			i++
 		case c == '(':
-			toks = append(toks, token{kind: tokOpen, pos: i})
+			emit(token{kind: tokOpen, pos: i})
 			i++
 		case c == ')':
-			toks = append(toks, token{kind: tokClose, pos: i})
+			emit(token{kind: tokClose, pos: i})
 			i++
 		case c == '?':
-			toks = append(toks, token{kind: tokQuery, pos: i})
+			emit(token{kind: tokQuery, pos: i})
 			i++
 		case c == '=' && i+1 < len(src) && src[i+1] == '>':
-			toks = append(toks, token{kind: tokArrow, pos: i})
+			emit(token{kind: tokArrow, pos: i})
 			i += 2
+		case c == '=':
+			emit(token{kind: tokAssign, pos: i})
+			i++
+		case c == '{':
+			emit(token{kind: tokBraceOpen, pos: i})
+			i++
+		case c == '}':
+			emit(token{kind: tokBraceClose, pos: i})
+			i++
+		case c == ':':
+			emit(token{kind: tokColon, pos: i})
+			i++
+		case c == '#':
+			for i < len(src) && src[i] != '\n' {
+				i++
+			}
 		case c == '"':
 			text, next, err := lexText(src, i)
 			if err != nil {
 				return nil, err
 			}
-			toks = append(toks, token{kind: tokText, text: text, pos: i})
+			emit(token{kind: tokText, text: text, pos: i})
 			i = next
 		case c == '-' || (c >= '0' && c <= '9'):
 			tok, next, err := lexInt(src, i)
 			if err != nil {
 				return nil, err
 			}
-			toks = append(toks, tok)
+			emit(tok)
 			i = next
 		case isIdentStart(src, i):
 			start := i
@@ -135,12 +175,13 @@ func lex(src string) ([]token, error) {
 				_, w := utf8.DecodeRuneInString(src[i:])
 				i += w
 			}
-			toks = append(toks, token{kind: tokIdent, text: src[start:i], pos: start})
+			emit(token{kind: tokIdent, text: src[start:i], pos: start})
 		default:
 			return nil, &SyntaxError{Pos: i, Msg: "unexpected character " + strconv.QuoteRune(rune(c))}
 		}
 	}
-	return append(toks, token{kind: tokEOF, pos: len(src)}), nil
+	emit(token{kind: tokEOF, pos: len(src)})
+	return toks, nil
 }
 
 func lexText(src string, i int) (string, int, error) {
@@ -207,6 +248,14 @@ func (p *parser) expect(k tokenKind, what string) (token, error) {
 	return p.next(), nil
 }
 
+// continuesLine reports whether the token ahead sits on the same line as the
+// one behind it. An application suffix may only extend a term it shares a line
+// with, so a statement beginning with "(" starts a new statement instead of
+// silently becoming an argument to the line above.
+func (p *parser) continuesLine() bool {
+	return p.i > 0 && p.toks[p.i].line == p.toks[p.i-1].line
+}
+
 func (p *parser) isBound(name string) bool {
 	for i := len(p.bound) - 1; i >= 0; i-- {
 		if p.bound[i] == name {
@@ -239,7 +288,7 @@ func (p *parser) apply(depth int) (Term, error) {
 	if err != nil {
 		return nil, err
 	}
-	for p.at(tokOpen) {
+	for p.at(tokOpen) && p.continuesLine() {
 		p.next()
 		arg, err := p.term(depth + 1)
 		if err != nil {
@@ -270,7 +319,7 @@ func (p *parser) primary(depth int) (Term, error) {
 		if p.isBound(t.text) {
 			return TermVar{Name: t.text}, nil
 		}
-		return TermAtom{Payload: NameAtom(t.text)}, nil
+		return TermRef{Name: t.text}, nil
 	case tokInt:
 		p.next()
 		return TermAtom{Payload: IntAtom(t.num)}, nil
@@ -289,7 +338,7 @@ func (p *parser) pattern(depth int) (Pattern, error) {
 	if err != nil {
 		return nil, err
 	}
-	for p.at(tokOpen) {
+	for p.at(tokOpen) && p.continuesLine() {
 		p.next()
 		arg, err := p.pattern(depth + 1)
 		if err != nil {
@@ -338,6 +387,155 @@ func (p *parser) patternPrimary(depth int) (Pattern, error) {
 	return nil, &SyntaxError{Pos: p.peek().pos, Msg: "expected a pattern, found " + p.peek().describe()}
 }
 
+// ParseProgram reads a whole Loom program: a sequence of statements.
+//
+//	identity = x => x
+//	friend   = x => y => knows(x)(y)
+//	transaction {
+//	    assert friend(Alice)(Bob)
+//	    assert friend(Bob)(Charlie)
+//	}
+//	answer = holds(friend(Alice)(Bob))
+//
+// Statements need no separator: a term ends as soon as the next token cannot
+// continue it. Because an application's "(" only continues a term on the same
+// line, a statement that begins with "(" starts a new statement rather than
+// feeding an argument to the line above.
+//
+// Unlike Parse this needs the store, because a match pattern's constants name
+// values that must live in one.
+func (s *Store) ParseProgram(src string) (*Program, error) {
+	p, err := newStatementParser(s, src)
+	if err != nil {
+		return nil, err
+	}
+	prog := &Program{}
+	for !p.at(tokEOF) {
+		c, err := p.statement(0)
+		if err != nil {
+			return nil, err
+		}
+		prog.Commands = append(prog.Commands, c)
+	}
+	return prog, nil
+}
+
+// ParseCommand reads exactly one statement, which is what a REPL needs.
+func (s *Store) ParseCommand(src string) (Command, error) {
+	p, err := newStatementParser(s, src)
+	if err != nil {
+		return nil, err
+	}
+	c, err := p.statement(0)
+	if err != nil {
+		return nil, err
+	}
+	if !p.at(tokEOF) {
+		return nil, &SyntaxError{Pos: p.peek().pos, Msg: "unexpected " + p.peek().describe()}
+	}
+	return c, nil
+}
+
+func newStatementParser(s *Store, src string) (*parser, error) {
+	toks, err := lex(src)
+	if err != nil {
+		return nil, err
+	}
+	return &parser{toks: toks, store: s}, nil
+}
+
+// statement keywords are contextual: assert, retract, match and transaction
+// introduce a command only at the start of a statement. Anywhere else they are
+// ordinary identifiers, so knows(assert) is still a perfectly good value.
+func (p *parser) statement(depth int) (Command, error) {
+	if t := p.peek(); t.kind == tokIdent {
+		switch t.text {
+		case "assert":
+			p.next()
+			term, err := p.term(depth)
+			if err != nil {
+				return nil, err
+			}
+			return Assert{Term: term}, nil
+		case "retract":
+			p.next()
+			claim, err := p.claimRef()
+			if err != nil {
+				return nil, err
+			}
+			return Retract{Claim: claim}, nil
+		case "match":
+			p.next()
+			pat, err := p.pattern(depth)
+			if err != nil {
+				return nil, err
+			}
+			return Query{Pattern: pat}, nil
+		case "transaction":
+			p.next()
+			return p.transaction(depth)
+		}
+		if p.toks[p.i+1].kind == tokAssign {
+			name := p.next().text
+			p.next() // "="
+			term, err := p.term(depth)
+			if err != nil {
+				return nil, err
+			}
+			return Define{Name: name, Term: term}, nil
+		}
+	}
+	term, err := p.term(depth)
+	if err != nil {
+		return nil, err
+	}
+	return Evaluate{Term: term}, nil
+}
+
+func (p *parser) transaction(depth int) (Command, error) {
+	if depth > maxNesting {
+		return nil, &SyntaxError{Pos: p.peek().pos, Msg: "nested too deeply"}
+	}
+	if _, err := p.expect(tokBraceOpen, `"{"`); err != nil {
+		return nil, err
+	}
+	tx := Transaction{}
+	for !p.at(tokBraceClose) {
+		if p.at(tokEOF) {
+			return nil, &SyntaxError{Pos: p.peek().pos, Msg: `unterminated transaction, expected "}"`}
+		}
+		c, err := p.statement(depth + 1)
+		if err != nil {
+			return nil, err
+		}
+		switch c.(type) {
+		case Assert, Retract:
+		default:
+			return nil, &SyntaxError{Pos: p.peek().pos, Msg: "only assert and retract may appear in a transaction"}
+		}
+		tx.Body = append(tx.Body, c)
+	}
+	p.next() // "}"
+	return tx, nil
+}
+
+// claimRef reads a claim identity, written either bare or in the claim:1 form
+// that results are printed in.
+func (p *parser) claimRef() (ClaimID, error) {
+	if p.at(tokIdent) && p.peek().text == "claim" && p.toks[p.i+1].kind == tokColon {
+		p.next()
+		p.next()
+	}
+	t, err := p.expect(tokInt, "a claim id")
+	if err != nil {
+		return 0, err
+	}
+	if t.num <= 0 {
+		return 0, &SyntaxError{Pos: t.pos, Msg: "claim ids start at 1"}
+	}
+	return ClaimID(t.num), nil
+}
+
 // Format renders a term back to surface syntax. It is a debugging aid, not a
 // canonical representation: canonicalization is defined for values (§36), not
 // for the programs that produce them.
@@ -352,6 +550,8 @@ func formatTerm(b *strings.Builder, t Term) {
 	case TermAtom:
 		sourceAtom(b, x.Payload)
 	case TermVar:
+		b.WriteString(x.Name)
+	case TermRef:
 		b.WriteString(x.Name)
 	case TermLambda:
 		b.WriteString(x.Param)

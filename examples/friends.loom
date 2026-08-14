@@ -1,0 +1,33 @@
+# A complete tiny Loom program. Run it with:
+#
+#     loom examples/friends.loom
+#
+# or keep the definitions and poke at them:
+#
+#     loom -i examples/friends.loom
+
+# Definitions are ordinary top-level bindings. There is no let and no keyword.
+identity = x => x
+
+# A function whose result is symbolic. Both lambdas reduce, then reduction
+# stops because nothing defines knows, and what is left is a fact.
+friend = x => y => knows(x)(y)
+
+# Writes are commands, never expressions. A transaction publishes all of its
+# commands or none of them.
+transaction {
+    assert friend(Alice)(Bob)
+    assert friend(Bob)(Charlie)
+}
+
+# friend(Alice)(Bob) and knows(Alice)(Bob) are the same value, so this holds.
+holds(knows(Alice)(Bob))
+
+# identity computes all the way to a plain atom. Same syntax, different outcome.
+identity(Alice)
+
+# Reading the world is not a command, so holds composes like anything else.
+assert observed(holds(friend(Alice)(Bob)))
+
+# A capture is not a lambda variable. It belongs to the query interface.
+match knows(?who)(?whom)

@@ -3,6 +3,7 @@ package loom
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Value is a runtime value. The spec names three (§12) and permits internal
@@ -84,6 +85,47 @@ func describe(v Value) string {
 	return fmt.Sprintf("%T", v)
 }
 
+// Display writes any runtime value in surface syntax, including the ones that
+// have no canonical identity. Persistable values go through Source and are
+// rendered iteratively; closures and applications over them are bounded by the
+// evaluation depth limit, so neither can nest without bound.
+func (s *Store) Display(v Value) string {
+	var b strings.Builder
+	s.display(&b, v)
+	return b.String()
+}
+
+func (s *Store) display(b *strings.Builder, v Value) {
+	switch x := v.(type) {
+	case Atom:
+		b.WriteString(s.Source(x.ID))
+	case Neutral:
+		if x.ID != 0 {
+			b.WriteString(s.Source(x.ID))
+			return
+		}
+		s.display(b, x.Fn)
+		b.WriteByte('(')
+		s.display(b, x.Arg)
+		b.WriteByte(')')
+	case *Closure:
+		b.WriteString(x.Param)
+		b.WriteString(" => ")
+		formatTerm(b, x.Body)
+	case *partial:
+		b.WriteString(s.Source(x.atom))
+		for _, arg := range x.args {
+			b.WriteByte('(')
+			s.display(b, arg)
+			b.WriteByte(')')
+		}
+	case nil:
+		b.WriteString("<nil>")
+	default:
+		fmt.Fprintf(b, "<%T>", v)
+	}
+}
+
 // Env is a lexical environment: a chain of parameter bindings. Binding by
 // environment rather than substitution is what keeps capture correct (§8).
 type Env struct {
@@ -162,15 +204,23 @@ func registerBuiltins(s *Store) {
 
 // Eval evaluates a term against this world snapshot. Every read the evaluation
 // performs observes this one snapshot (§17).
+//
+// No definitions are in scope, so every reference falls back to the atom of its
+// name. Use Session to evaluate against a program's definitions.
 func (w World) Eval(t Term) (Value, error) {
-	e := &evaluator{store: w.store, world: w, limits: w.store.limits}
-	return e.eval(t, nil, 0)
+	return w.EvalWith(t, nil, nil)
 }
 
 // EvalIn evaluates a term in an explicit environment, which is what a caller
 // needs to apply a closure it is holding.
 func (w World) EvalIn(t Term, env *Env) (Value, error) {
-	e := &evaluator{store: w.store, world: w, limits: w.store.limits}
+	return w.EvalWith(t, env, nil)
+}
+
+// EvalWith evaluates a term in an explicit environment and against an explicit
+// set of top-level definitions. A nil Definitions means none are in scope.
+func (w World) EvalWith(t Term, env *Env, defs *Definitions) (Value, error) {
+	e := &evaluator{store: w.store, world: w, limits: w.store.limits, defs: defs}
 	return e.eval(t, env, 0)
 }
 
@@ -184,6 +234,7 @@ type evaluator struct {
 	store  *Store
 	world  World
 	limits Limits
+	defs   *Definitions
 	steps  int
 }
 
@@ -211,6 +262,14 @@ func (e *evaluator) eval(t Term, env *Env, depth int) (Value, error) {
 			return nil, errorf(UnboundVariable, "%s", x.Name)
 		}
 		return v, nil
+	case TermRef:
+		// A name nothing defines is not an error: it is the atom of that name.
+		// This is the kernel staying permissive (§34), and it is what makes
+		// knows(Alice)(Bob) graph structure without anyone declaring knows.
+		if v, ok := e.defs.Lookup(x.Name); ok {
+			return v, nil
+		}
+		return Atom{ID: e.store.Atom(NameAtom(x.Name))}, nil
 	case TermLambda:
 		return &Closure{Param: x.Param, Body: x.Body, Env: env}, nil
 	case TermApply:

@@ -48,16 +48,32 @@ Layout, one file per concern:
 | --- | --- |
 | `value.go` | the canonical hash-consed value arena and the `Store` |
 | `term.go` | the term AST |
-| `parse.go` | surface syntax for terms and patterns, store-free for terms |
-| `eval.go` | values, closures, application, primitives |
+| `parse.go` | surface syntax for terms, patterns and statements |
+| `eval.go` | values, closures, application, primitives, `Display` |
 | `world.go` | snapshots, claims, `holds` |
 | `match.go` | patterns and structural matching |
 | `tx.go` | transactions |
+| `program.go` | definitions, commands, `Session` |
 | `errors.go` | the §34 error codes |
 | `limits.go` | the §35 resource policy |
+| `cmd/loom` | the REPL and script runner |
+
+Two languages are in play and confusing them wastes time. Go is the *host*: it
+implements the interpreter and a user never needs to know it exists. Loom is the
+language in `docs/loom-surface-v0.md`. Surface syntax may grow without the
+semantic kernel growing, and that is the point. `2 + 3` would lower to
+`add(2)(3)`, a block to a lambda application. Never add meaning to the kernel to
+serve syntax.
 
 Invariants worth keeping:
 
+- An identifier is a `TermVar` when a lambda binds it and a `TermRef` otherwise,
+  and an undefined `TermRef` evaluates to the atom of its own name. That
+  fallback is load-bearing: it is what lets `identity` resolve while `knows`
+  stays inert in the same expression.
+- An application's `(` only continues a term on the same line. Without that,
+  consecutive statements fuse and `(x => x)(Alice)` becomes an argument to the
+  line above.
 - `ValueID` is 1-based; zero means "no canonical identity". A `Neutral` with
   `ID == 0` is a legal value that is not persistable.
 - Lock order is arena before journal. Nothing takes the journal lock and then

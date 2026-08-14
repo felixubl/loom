@@ -47,6 +47,71 @@ assert knows(Alice)(Bob)   asserts it
 Persistence adds four things to the calculus and nothing else: asserted values,
 claims, `holds`, and `match`.
 
+## The language
+
+A whole Loom program is definitions, commands, and expressions.
+
+```
+# A function whose result is symbolic.
+friend = x => y => knows(x)(y)
+
+transaction {
+    assert friend(Alice)(Bob)
+    assert friend(Bob)(Charlie)
+}
+
+answer = holds(friend(Alice)(Bob))
+match knows(?who)(?whom)
+```
+
+An identifier is a variable when an enclosing lambda binds it, and a reference
+otherwise. A reference nothing defines evaluates to the atom of its own name.
+That one rule is why computation and graph construction need no separate
+notation:
+
+```
+friend                 → x => y => knows(x)(y)
+friend(Alice)          → y => knows(Alice)(y)
+friend(Alice)(Bob)     → knows(Alice)(Bob)
+```
+
+Both lambdas reduce, then reduction stops because `knows` is inert. A function
+just built a persistable fact out of ordinary application.
+
+There are no operators, no `if`, no blocks, no loops, and no `let`. No
+arithmetic either: write `add(2)(3)`, not `2 + 3`. Those are all future surface
+growth, and none of them requires the semantic kernel to grow.
+
+[`docs/loom-surface-v0.md`](docs/loom-surface-v0.md) describes the syntax in
+full.
+
+## The REPL
+
+```
+$ go run ./cmd/loom
+loom> x => x
+x => x
+loom> (x => x)(Alice)
+Alice
+loom> knows(Alice)
+knows(Alice)
+loom> knows(Alice)(Bob)
+knows(Alice)(Bob)
+loom> assert knows(Alice)(Bob)
+claim:1
+loom> holds(knows(Alice)(Bob))
+true
+loom> match knows(Alice)(?x)
+x = Bob
+```
+
+```
+loom program.loom      run a program, then exit
+loom -i program.loom   run a program, then continue interactively
+```
+
+See [`examples/friends.loom`](examples/friends.loom).
+
 ## Status
 
 This is v0: the smallest kernel the rest can be built on top of, and nothing
@@ -54,7 +119,7 @@ more. It is implemented and every conformance case in the specification passes.
 
 Built:
 
-- atoms, variables, lambdas, call-by-value application
+- atoms, variables, references, lambdas, call-by-value application
 - closures, with lexical capture by environment
 - neutral (symbolic) applications
 - structural equality by hash-consed canonical interning
@@ -63,6 +128,7 @@ Built:
 - structural pattern matching
 - transactions with staged visibility
 - resource limits on steps, depth, value size and result count
+- a source language with definitions and commands, a script runner, and a REPL
 
 Deliberately not built: arithmetic, `if`, lists, sets, `map`/`filter`/`fold`,
 traversal, reactivity, temporal validity, query planning, schemas, properties,
@@ -136,25 +202,6 @@ Because writes are commands rather than expressions, they cannot vanish because
 a value went unused, run twice because a thunk was forced twice, reorder because
 an optimizer moved pure code, or fire by accident while something inspects the
 graph.
-
-## Syntax
-
-```
-term := atom | variable | variable "=>" term | term "(" term ")"
-```
-
-Application associates left, so `f(x)(y)` means `(f(x))(y)`. There is no
-multi-argument call. An identifier is a variable when an enclosing lambda binds
-it and an atom otherwise, which is why `knows(Alice)` is two atoms while
-`x => x` is a lambda over a variable.
-
-Patterns are a separate small language belonging to the query interface:
-
-```
-knows(Alice)(?x)     ?relation(Alice)(Bob)     pair(?x)(?x)     _
-```
-
-`?x` is a pattern capture. It is not a lambda variable, and the two never mix.
 
 ## Specification
 

@@ -44,9 +44,10 @@ func TestFormatRoundTrip(t *testing.T) {
 	}
 }
 
-// A free identifier is an atom; only a lambda parameter is a variable. That is
-// what makes knows(Alice) two atoms rather than two unbound variables.
-func TestFreeIdentifierIsAnAtom(t *testing.T) {
+// A free identifier is a reference, and a reference nothing defines evaluates
+// to the atom of its own name. That is what makes knows(Alice) graph structure
+// without anyone having declared knows.
+func TestFreeIdentifierIsAReferenceThatFallsBackToAnAtom(t *testing.T) {
 	term, err := loom.Parse("knows(Alice)")
 	if err != nil {
 		t.Fatal(err)
@@ -55,8 +56,13 @@ func TestFreeIdentifierIsAnAtom(t *testing.T) {
 	if !ok {
 		t.Fatalf("got %T, want TermApply", term)
 	}
-	if _, ok := apply.Fn.(loom.TermAtom); !ok {
-		t.Fatalf("function is %T, want TermAtom", apply.Fn)
+	if _, ok := apply.Fn.(loom.TermRef); !ok {
+		t.Fatalf("function is %T, want TermRef", apply.Fn)
+	}
+
+	s := loom.New()
+	if got := eval(t, s.World(), "knows(Alice)"); got != "knows(Alice)" {
+		t.Fatalf("got %q, want knows(Alice)", got)
 	}
 }
 
