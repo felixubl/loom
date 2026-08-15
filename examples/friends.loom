@@ -13,6 +13,11 @@ identity = x => x
 # stops because nothing defines knows, and what is left is a fact.
 friend = x => y => knows(x)(y)
 
+# A body may sit below its "=>": the newline carries no meaning where the
+# grammar still wants a term.
+introduce = x =>
+    meets(x)(everyone)
+
 # Writes are commands, never expressions. A transaction publishes all of its
 # commands or none of them.
 transaction {
@@ -28,6 +33,8 @@ identity(Alice)
 
 # Reading the world is not a command, so holds composes like anything else.
 assert observed(holds(friend(Alice)(Bob)))
+
+assert introduce(Alice)
 
 # A capture is not a lambda variable. It belongs to the query interface.
 match knows(?who)(?whom)

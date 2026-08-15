@@ -7,6 +7,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -80,18 +81,19 @@ func repl(s *loom.Session, out *bufio.Writer) {
 		pending.WriteString(in.Text())
 		pending.WriteByte('\n')
 
-		// A transaction block spans lines, so keep reading until its braces
-		// balance.
-		if unbalanced(pending.String()) {
-			continue
-		}
 		source := strings.TrimSpace(pending.String())
-		pending.Reset()
 		if source == "" {
+			pending.Reset()
 			continue
 		}
 
 		command, err := s.Store().ParseCommand(source)
+		if incomplete(err) {
+			// An open bracket, or a statement that cannot end yet. Keep reading
+			// rather than reporting an error the user is still in the middle of.
+			continue
+		}
+		pending.Reset()
 		if err != nil {
 			fmt.Fprintln(out, "error:", err)
 			continue
@@ -111,24 +113,11 @@ func repl(s *loom.Session, out *bufio.Writer) {
 	}
 }
 
-// unbalanced reports whether an open brace is still waiting to be closed,
-// ignoring braces inside string literals.
-func unbalanced(src string) bool {
-	depth, inText := 0, false
-	for i := 0; i < len(src); i++ {
-		switch {
-		case inText && src[i] == '\\':
-			i++
-		case src[i] == '"':
-			inText = !inText
-		case inText:
-		case src[i] == '{':
-			depth++
-		case src[i] == '}':
-			depth--
-		}
-	}
-	return depth > 0
+// incomplete reports whether the input merely ran out while the grammar still
+// wanted something, as opposed to being wrong.
+func incomplete(err error) bool {
+	var syntax *loom.SyntaxError
+	return errors.As(err, &syntax) && syntax.Incomplete
 }
 
 func isTerminal(f *os.File) bool {

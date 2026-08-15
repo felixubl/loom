@@ -23,9 +23,10 @@ const maxNesting = 512
 // which is why knows(Alice) is graph structure while x => x is a lambda over a
 // variable.
 //
-// An application's "(" only continues a term on the same line, so a line
-// beginning with "(" starts a new term rather than becoming an argument to the
-// line above.
+// A newline terminates a statement that is complete there. Where the grammar
+// still requires a term, parsing continues on the next line. An application's
+// "(" only continues a term on the same line, so a line beginning with "("
+// starts a new term rather than becoming an argument to the line above.
 //
 // Parse is store-free: it produces syntax, not values.
 func Parse(src string) (Term, error) {
@@ -254,9 +255,16 @@ func (p *parser) at(k tokenKind) bool { return p.toks[p.i].kind == k }
 
 func (p *parser) expect(k tokenKind, what string) (token, error) {
 	if !p.at(k) {
-		return token{}, &SyntaxError{Pos: p.peek().pos, Msg: "expected " + what + ", found " + p.peek().describe()}
+		return token{}, p.unexpected("expected " + what + ", found ")
 	}
 	return p.next(), nil
+}
+
+// unexpected reports the token ahead, marking the error incomplete when the
+// input simply ran out.
+func (p *parser) unexpected(prefix string) *SyntaxError {
+	t := p.peek()
+	return &SyntaxError{Pos: t.pos, Msg: prefix + t.describe(), Incomplete: t.kind == tokEOF}
 }
 
 // continuesLine reports whether the token ahead sits on the same line as the
@@ -274,6 +282,7 @@ func (p *parser) term(depth int) (Term, error) {
 	if p.at(tokIdent) && p.toks[p.i+1].kind == tokArrow {
 		param := p.next().text
 		p.next() // "=>"
+		p.skipLines()
 		body, err := p.term(depth + 1)
 		if err != nil {
 			return nil, err
@@ -324,7 +333,7 @@ func (p *parser) primary(depth int) (Term, error) {
 		p.next()
 		return TermAtom{Payload: TextAtom(t.text)}, nil
 	}
-	return nil, &SyntaxError{Pos: p.peek().pos, Msg: "expected a term, found " + p.peek().describe()}
+	return nil, p.unexpected("expected a term, found ")
 }
 
 func (p *parser) pattern(depth int) (Pattern, error) {
@@ -381,7 +390,7 @@ func (p *parser) patternPrimary(depth int) (Pattern, error) {
 		p.next()
 		return PConst{Value: p.store.Atom(TextAtom(t.text))}, nil
 	}
-	return nil, &SyntaxError{Pos: p.peek().pos, Msg: "expected a pattern, found " + p.peek().describe()}
+	return nil, p.unexpected("expected a pattern, found ")
 }
 
 // ParseProgram reads a whole Loom program: a sequence of statements.
@@ -394,10 +403,11 @@ func (p *parser) patternPrimary(depth int) (Pattern, error) {
 //	}
 //	answer = holds(friend(Alice)(Bob))
 //
-// Statements need no separator: a term ends as soon as the next token cannot
-// continue it. Because an application's "(" only continues a term on the same
-// line, a statement that begins with "(" starts a new statement rather than
-// feeding an argument to the line above.
+// Statements need no separator. A newline ends a statement that is complete
+// there, and is ignored where a term is still required, so a lambda body may sit
+// on the line below its "=>". Because an application's "(" only continues a term
+// on the same line, a statement beginning with "(" starts a new statement rather
+// than feeding an argument to the line above.
 //
 // Unlike Parse this needs the store, because a match pattern's constants name
 // values that must live in one.
@@ -451,6 +461,7 @@ func (p *parser) statement(depth int) (Command, error) {
 		switch t.text {
 		case "assert":
 			p.next()
+			p.skipLines()
 			term, err := p.term(depth)
 			if err != nil {
 				return nil, err
@@ -458,6 +469,7 @@ func (p *parser) statement(depth int) (Command, error) {
 			return Assert{Term: term}, nil
 		case "retract":
 			p.next()
+			p.skipLines()
 			claim, err := p.claimRef()
 			if err != nil {
 				return nil, err
@@ -465,6 +477,7 @@ func (p *parser) statement(depth int) (Command, error) {
 			return Retract{Claim: claim}, nil
 		case "match":
 			p.next()
+			p.skipLines()
 			pat, err := p.pattern(depth)
 			if err != nil {
 				return nil, err
@@ -477,6 +490,7 @@ func (p *parser) statement(depth int) (Command, error) {
 		if p.toks[p.i+1].kind == tokAssign {
 			name := p.next().text
 			p.next() // "="
+			p.skipLines()
 			term, err := p.term(depth)
 			if err != nil {
 				return nil, err
@@ -501,7 +515,7 @@ func (p *parser) transaction(depth int) (Command, error) {
 	tx := Transaction{}
 	for p.skipLines(); !p.at(tokBraceClose); p.skipLines() {
 		if p.at(tokEOF) {
-			return nil, &SyntaxError{Pos: p.peek().pos, Msg: `unterminated transaction, expected "}"`}
+			return nil, &SyntaxError{Pos: p.peek().pos, Msg: `unterminated transaction, expected "}"`, Incomplete: true}
 		}
 		c, err := p.statement(depth + 1)
 		if err != nil {

@@ -62,36 +62,51 @@ exists only so the name `42` and the string `"42"` stay different atoms.
 
 Normative:
 
-> An unparenthesized application may only continue on the same physical line. A
-> newline terminates the current statement. Explicit delimiters may span lines.
+> A newline terminates a statement that is **complete** there. Where the grammar
+> still requires a term, a newline carries no meaning. An unparenthesized
+> application may only continue on the same physical line. Explicit delimiters
+> may span lines.
 
-This avoids semicolon insertion games while keeping multiline expressions
-possible when they are deliberately grouped.
+The first sentence is the point, and it is not semicolon insertion. Insertion is
+dangerous because it puts a terminator into complete-looking code by heuristic.
+This rule only ever declines to terminate where terminating is impossible, and
+there is no heuristic in that: `f = x =>` is not a statement under any reading.
+
+A complete statement never absorbs the line below it:
 
 ```
-knows(Alice)         one statement
-
 knows                two statements: the second is (Alice)
 (Alice)
+```
 
-knows(               one statement: the parentheses are explicit
+A statement that cannot end yet simply continues:
+
+```
+friends = x =>       one statement
+    knows(x)
+
+answer =             one statement
+    knows(Alice)(Bob)
+
+assert               one statement
+    knows(Alice)(Bob)
+```
+
+Parentheses suspend the rule outright, which is how a term spans lines when
+nothing else would let it:
+
+```
+knows(
     Alice
 )
-
-f = (x =>            one statement, deliberately grouped
-    knows(x))
 ```
 
-A statement that is incomplete when the newline arrives is a syntax error, not a
-quiet continuation:
+Running out of input entirely is still an error. Parsers report it as
+*incomplete* rather than wrong, which is how the REPL knows to keep reading
+instead of complaining at a half-typed definition.
 
-```
-f = x =>             error: expected a term, found end of line
-    knows(x)
-```
-
-Only parentheses suspend the rule. A `transaction { … }` block still takes one
-statement per line.
+Only parentheses suspend line significance. A `transaction { … }` block still
+takes one statement per line.
 
 `#` begins a comment that runs to the end of the line.
 
@@ -351,11 +366,16 @@ loom program.loom      run a program, then exit
 loom -i program.loom   run a program, then continue interactively
 ```
 
-Each REPL line is its own program, so a statement cannot see a name introduced
-after it. Typing `f = x => helper(x)` before `helper` exists resolves `helper`
-to an atom, and defining `helper` afterwards does not change `f`. That is the
-same static resolution rule everywhere else benefits from. Put forward or
-mutually recursive definitions in one file and load it with `loom -i`.
+The REPL keeps reading while the input is incomplete, so a definition may be
+typed over several lines and a `transaction { … }` block over several more.
+
+Each submitted statement is its own program, so a statement cannot see a name
+introduced after it. Typing `f = x => helper(x)` before `helper` exists resolves
+`helper` to an atom, and defining `helper` afterwards does not change `f`. That
+is the same static resolution everything else benefits from, and it is not
+something a different scoping rule could fix: resolution happens once, so a name
+that was not there is not there. Put forward or mutually recursive definitions in
+one file and load it with `loom -i`.
 
 ## What is deliberately absent
 

@@ -84,10 +84,13 @@ Invariants worth keeping:
 - An intrinsic's identity is the value, not its name. `holds = x => x` rebinds
   the name only. Compiled forms (Look, later) must hold the value from
   `Store.Intrinsic`, never re-look-up the text.
-- A newline ends a statement and an unparenthesized application may only
-  continue on the same line. Only parentheses suspend this. Without it,
-  consecutive statements fuse and `(x => x)(Alice)` becomes an argument to the
-  line above.
+- A newline ends a statement that is COMPLETE there, and is ignored where a term
+  is still required (after `=`, `=>`, `assert`, `retract`, `match`). An
+  unparenthesized application's `(` may only continue on the same line. Without
+  the first half, consecutive statements fuse and `(x => x)(Alice)` becomes an
+  argument to the line above; without the second, a lambda body cannot sit on
+  its own line. `SyntaxError.Incomplete` marks "ran out" so the REPL keeps
+  reading.
 - `match` is on the read side, not the write side. `Mutates` is the boundary,
   and it will matter for caching and reactivity.
 - `ValueID` is 1-based; zero means "no canonical identity". A `Neutral` with

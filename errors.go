@@ -65,9 +65,14 @@ func errorf(code Code, format string, args ...any) *Error {
 }
 
 // SyntaxError reports malformed source. Pos is a byte offset into the input.
+//
+// Incomplete marks the input as unfinished rather than wrong: it ran out while
+// the grammar still required something. A REPL keeps reading instead of
+// reporting it.
 type SyntaxError struct {
-	Pos int
-	Msg string
+	Pos        int
+	Msg        string
+	Incomplete bool
 }
 
 func (e *SyntaxError) Error() string {

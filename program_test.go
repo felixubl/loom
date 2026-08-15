@@ -355,23 +355,34 @@ func TestKeywordsAreContextual(t *testing.T) {
 	`), "knows(assert)", "g(match)")
 }
 
-// A newline ends a statement, and an unparenthesized application may only
-// continue on the same physical line. Explicit delimiters are how a term
-// deliberately spans lines.
+// A newline ends a statement that is complete there. Where the grammar still
+// requires a term it is ignored, so a body may sit on the line below.
 func TestStatementsAreLineDelimited(t *testing.T) {
 	s := loom.NewSession(loom.New())
+
+	// A complete statement never absorbs the line below it. This is the case
+	// the rule exists for.
 	wantLines(t, run(t, s, "x => x\n(x => x)(Alice)"), "x => x", "Alice")
 	wantLines(t, run(t, s, "knows\n(Alice)"), "knows", "Alice")
 
-	// Parentheses suspend the rule, so a term may span lines on purpose.
-	wantLines(t, run(t, s, "knows(\n  Alice\n)"), "knows(Alice)")
-	wantLines(t, run(t, s, "f = (x =>\n  knows(x))\nf(Alice)"), "knows(Alice)")
+	// Where a term is still required, the newline carries no meaning.
+	wantLines(t, run(t, s, "f = x =>\n  knows(x)\nf(Alice)"), "knows(Alice)")
+	wantLines(t, run(t, s, "g =\n  Alice\ng"), "Alice")
+	wantLines(t, run(t, s, "assert\n  knows(Alice)(Bob)"), "claim:1")
 
-	// Without them, a statement that is incomplete at the newline is an error
-	// rather than a quiet continuation.
-	for _, src := range []string{"f = x =>\n  knows(x)", "f =\n  Alice", "assert\n  knows(Alice)(Bob)"} {
-		if _, err := s.Store().ParseProgram(src); err == nil {
-			t.Errorf("parsed %q across a newline, expected a syntax error", src)
+	// Parentheses suspend the rule outright.
+	wantLines(t, run(t, s, "knows(\n  Alice\n)"), "knows(Alice)")
+	wantLines(t, run(t, s, "h = (x =>\n  likes(x))\nh(Alice)"), "likes(Alice)")
+
+	// Running out of input entirely is still an error, and is reported as
+	// incomplete so a REPL knows to keep reading.
+	for _, src := range []string{"f =", "f = x =>", "knows(", "transaction {"} {
+		_, err := s.Store().ParseProgram(src)
+		var syntax *loom.SyntaxError
+		if !errors.As(err, &syntax) {
+			t.Errorf("parsed %q, expected a syntax error", src)
+		} else if !syntax.Incomplete {
+			t.Errorf("%q reported as wrong rather than incomplete", src)
 		}
 	}
 }

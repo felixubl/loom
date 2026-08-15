@@ -566,12 +566,13 @@
       "held": []
     },
     {
-      "name": "an incomplete statement at a newline is a syntax error",
+      "name": "input that runs out is a syntax error",
       "spec": "surface",
-      "program": "f = x =>\n    knows(x)",
+      "program": "f =",
       "output": [],
       "held": [],
-      "error": "syntax_error"
+      "error": "syntax_error",
+      "note": "a newline no longer ends a statement that cannot end there, but running out of input entirely still fails"
     },
     {
       "name": "statement keywords are contextual",
@@ -633,6 +634,37 @@
       ],
       "held": [
         "App(Atom(name,\"ctrl\"),Atom(text,\"\\u0001\\u007f\"))"
+      ]
+    },
+    {
+      "name": "a newline is ignored where a term is still required",
+      "spec": "surface",
+      "note": "the lambda body may sit below its =>, which a complete statement absorbing the next line must not be confused with",
+      "program": "friends = x =>\n    knows(x)\nfriends(Alice)",
+      "output": [
+        "knows(Alice)"
+      ],
+      "held": []
+    },
+    {
+      "name": "a definition body may sit below its equals sign",
+      "spec": "surface",
+      "program": "answer =\n    knows(Alice)(Bob)\nanswer",
+      "output": [
+        "knows(Alice)(Bob)"
+      ],
+      "held": []
+    },
+    {
+      "name": "a command argument may sit on the next line",
+      "spec": "surface",
+      "program": "assert\n    knows(Alice)(Bob)\nholds(knows(Alice)(Bob))",
+      "output": [
+        "claim:1",
+        "true"
+      ],
+      "held": [
+        "App(App(Atom(name,\"knows\"),Atom(name,\"Alice\")),Atom(name,\"Bob\"))"
       ]
     }
   ]
