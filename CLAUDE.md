@@ -55,6 +55,9 @@ Layout, one file per concern:
 | `match.go` | patterns and structural matching |
 | `tx.go` | transactions |
 | `program.go` | definitions, commands, `Session` |
+| `render.go` | the one result rendering the REPL and corpus share |
+| `text.go` | the specified escaping for canonical and surface text |
+| `conformance/` | the corpus that freezes v0, and its runner |
 | `errors.go` | the §34 error codes |
 | `limits.go` | the §35 resource policy |
 | `cmd/loom` | the REPL and script runner |
@@ -96,5 +99,15 @@ Invariants worth keeping:
 - Rendering a value must stay iterative. Values nest as deeply as evaluation
   allows, and printing has no resource limit of its own.
 
-`conformance_test.go` implements §40 case by case. A change that makes one of
-those fail is a change to the specification, not to the code.
+`conformance/corpus.json` freezes v0 semantics. It is **data, not Go tests**, so
+another implementation can run it; keep it that way. A change that makes a case
+fail is a change to the specification, not to the code. `conformance_test.go`
+beside the kernel covers what a linear program cannot express: snapshot
+consistency and resource limits.
+
+Before adding anything, read `docs/roadmap.md`. Every feature is classified as
+exactly one of: kernel semantic, core function, surface sugar, query
+optimization, runtime optimization, persistence capability. **The default answer
+is not kernel.** `sum` is `fold(add)(0)`, `+` is sugar for `add(x)(y)`, a
+`(relation, subject, object)` index is a storage optimization over application
+spines. Versions add one capability at a time and in order.

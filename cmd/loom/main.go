@@ -9,7 +9,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/felixubl/loom"
@@ -50,7 +49,7 @@ func runFile(s *loom.Session, out *bufio.Writer, path string) error {
 	}
 	results, err := s.RunProgram(program)
 	for _, r := range results {
-		if line := render(s.Store(), r); line != "" {
+		for _, line := range loom.Render(s.Store(), r) {
 			fmt.Fprintln(out, line)
 		}
 	}
@@ -102,7 +101,7 @@ func repl(s *loom.Session, out *bufio.Writer) {
 			fmt.Fprintln(out, "error:", err)
 			continue
 		}
-		if line := render(s.Store(), result); line != "" {
+		for _, line := range loom.Render(s.Store(), result) {
 			fmt.Fprintln(out, line)
 		}
 		out.Flush()
@@ -130,48 +129,6 @@ func unbalanced(src string) bool {
 		}
 	}
 	return depth > 0
-}
-
-// render turns a result into the one line the REPL prints for it. Definitions
-// and retractions print nothing.
-func render(store *loom.Store, r loom.Result) string {
-	switch r.Command.(type) {
-	case loom.Evaluate:
-		return store.Display(r.Value)
-	case loom.Assert, loom.Transaction:
-		ids := make([]string, 0, len(r.Claims))
-		for _, id := range r.Claims {
-			ids = append(ids, fmt.Sprintf("claim:%d", id))
-		}
-		return strings.Join(ids, "\n")
-	case loom.Query:
-		if len(r.Rows) == 0 {
-			return "(no matches)"
-		}
-		lines := make([]string, 0, len(r.Rows))
-		for _, row := range r.Rows {
-			lines = append(lines, renderRow(store, row))
-		}
-		sort.Strings(lines)
-		return strings.Join(lines, "\n")
-	}
-	return ""
-}
-
-func renderRow(store *loom.Store, row loom.Bindings) string {
-	if len(row) == 0 {
-		return "(match)"
-	}
-	names := make([]string, 0, len(row))
-	for name := range row {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	parts := make([]string, 0, len(names))
-	for _, name := range names {
-		parts = append(parts, name+" = "+store.Source(row[name]))
-	}
-	return strings.Join(parts, ", ")
 }
 
 func isTerminal(f *os.File) bool {

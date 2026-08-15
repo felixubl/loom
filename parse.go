@@ -176,7 +176,7 @@ func lex(src string) ([]token, error) {
 				i++
 			}
 		case c == '"':
-			text, next, err := lexText(src, i)
+			text, next, err := unquoteText(src, i)
 			if err != nil {
 				return nil, err
 			}
@@ -203,23 +203,6 @@ func lex(src string) ([]token, error) {
 	endLine(len(src))
 	emit(token{kind: tokEOF, pos: len(src)})
 	return toks, nil
-}
-
-func lexText(src string, i int) (string, int, error) {
-	for j := i + 1; j < len(src); j++ {
-		if src[j] == '\\' {
-			j++
-			continue
-		}
-		if src[j] == '"' {
-			text, err := strconv.Unquote(src[i : j+1])
-			if err != nil {
-				return "", 0, &SyntaxError{Pos: i, Msg: "malformed string literal"}
-			}
-			return text, j + 1, nil
-		}
-	}
-	return "", 0, &SyntaxError{Pos: i, Msg: "unterminated string literal"}
 }
 
 func lexInt(src string, i int) (token, int, error) {

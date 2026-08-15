@@ -201,13 +201,13 @@ func canonicalAtom(b *strings.Builder, p Payload) {
 	b.WriteString("Atom(")
 	b.WriteString(p.Tag.String())
 	b.WriteByte(',')
-	b.WriteString(strconv.Quote(p.Body))
+	b.WriteString(quoteText(p.Body))
 	b.WriteByte(')')
 }
 
 func sourceAtom(b *strings.Builder, p Payload) {
 	if p.Tag == TagText {
-		b.WriteString(strconv.Quote(p.Body))
+		b.WriteString(quoteText(p.Body))
 		return
 	}
 	b.WriteString(p.Body)

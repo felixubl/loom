@@ -1,0 +1,639 @@
+{
+  "version": "0.1",
+  "cases": [
+    {
+      "name": "atom",
+      "spec": "§40.1",
+      "program": "Alice",
+      "output": [
+        "Alice"
+      ],
+      "held": []
+    },
+    {
+      "name": "identity",
+      "spec": "§40.2",
+      "program": "(x => x)(Alice)",
+      "output": [
+        "Alice"
+      ],
+      "held": []
+    },
+    {
+      "name": "constant",
+      "spec": "§40.3",
+      "program": "(x => y => x)(Alice)(Bob)",
+      "output": [
+        "Alice"
+      ],
+      "held": []
+    },
+    {
+      "name": "neutral application",
+      "spec": "§40.4",
+      "program": "knows(Alice)",
+      "output": [
+        "knows(Alice)"
+      ],
+      "held": []
+    },
+    {
+      "name": "nested neutral application",
+      "spec": "§40.5",
+      "program": "knows(Alice)(Bob)",
+      "output": [
+        "knows(Alice)(Bob)"
+      ],
+      "held": []
+    },
+    {
+      "name": "arguments evaluate before neutralization",
+      "spec": "§40.6",
+      "program": "knows((x => x)(Alice))(Bob)",
+      "output": [
+        "knows(Alice)(Bob)"
+      ],
+      "held": []
+    },
+    {
+      "name": "deeply nested neutral application",
+      "spec": "§9",
+      "program": "gave(Alice)(Book)(Bob)",
+      "output": [
+        "gave(Alice)(Book)(Bob)"
+      ],
+      "held": []
+    },
+    {
+      "name": "argument position nests too",
+      "spec": "§9",
+      "program": "wraps(knows(Alice)(Bob))",
+      "output": [
+        "wraps(knows(Alice)(Bob))"
+      ],
+      "held": []
+    },
+    {
+      "name": "structural equality",
+      "spec": "§40.7, §15",
+      "note": "two independently constructed values are one fact",
+      "program": "assert knows(Alice)(Bob)\nassert knows((x => x)(Alice))((y => y)(Bob))\nholds(knows(Alice)(Bob))",
+      "output": [
+        "claim:1",
+        "claim:2",
+        "true"
+      ],
+      "held": [
+        "App(App(Atom(name,\"knows\"),Atom(name,\"Alice\")),Atom(name,\"Bob\"))"
+      ]
+    },
+    {
+      "name": "structural inequality",
+      "spec": "§15",
+      "program": "assert knows(Alice)(Bob)\nholds(knows(Bob)(Alice))",
+      "output": [
+        "claim:1",
+        "false"
+      ],
+      "held": [
+        "App(App(Atom(name,\"knows\"),Atom(name,\"Alice\")),Atom(name,\"Bob\"))"
+      ]
+    },
+    {
+      "name": "assert symbolic value",
+      "spec": "§40.8",
+      "program": "assert knows(Alice)(Bob)",
+      "output": [
+        "claim:1"
+      ],
+      "held": [
+        "App(App(Atom(name,\"knows\"),Atom(name,\"Alice\")),Atom(name,\"Bob\"))"
+      ]
+    },
+    {
+      "name": "holds",
+      "spec": "§40.9",
+      "program": "assert knows(Alice)(Bob)\nholds(knows(Alice)(Bob))",
+      "output": [
+        "claim:1",
+        "true"
+      ],
+      "held": [
+        "App(App(Atom(name,\"knows\"),Atom(name,\"Alice\")),Atom(name,\"Bob\"))"
+      ]
+    },
+    {
+      "name": "missing fact",
+      "spec": "§40.10",
+      "program": "assert knows(Alice)(Bob)\nholds(knows(Alice)(Charlie))",
+      "output": [
+        "claim:1",
+        "false"
+      ],
+      "held": [
+        "App(App(Atom(name,\"knows\"),Atom(name,\"Alice\")),Atom(name,\"Bob\"))"
+      ]
+    },
+    {
+      "name": "assert evaluates first",
+      "spec": "§29",
+      "note": "the world holds evaluated values, never unevaluated programs",
+      "program": "assert (x => x)(Alice)\nholds(Alice)",
+      "output": [
+        "claim:1",
+        "true"
+      ],
+      "held": [
+        "Atom(name,\"Alice\")"
+      ]
+    },
+    {
+      "name": "any persistable value may be asserted",
+      "spec": "§20",
+      "program": "assert 42\nassert \"hello\"\nassert Alice\nholds(42)\nholds(\"hello\")",
+      "output": [
+        "claim:1",
+        "claim:2",
+        "claim:3",
+        "true",
+        "true"
+      ],
+      "held": [
+        "Atom(int,\"42\")",
+        "Atom(name,\"Alice\")",
+        "Atom(text,\"hello\")"
+      ]
+    },
+    {
+      "name": "match",
+      "spec": "§40.11",
+      "program": "assert knows(Alice)(Bob)\nassert knows(Alice)(Charlie)\nassert knows(Dana)(Bob)\nmatch knows(Alice)(?x)",
+      "output": [
+        "claim:1",
+        "claim:2",
+        "claim:3",
+        "x = Bob",
+        "x = Charlie"
+      ],
+      "held": [
+        "App(App(Atom(name,\"knows\"),Atom(name,\"Alice\")),Atom(name,\"Bob\"))",
+        "App(App(Atom(name,\"knows\"),Atom(name,\"Alice\")),Atom(name,\"Charlie\"))",
+        "App(App(Atom(name,\"knows\"),Atom(name,\"Dana\")),Atom(name,\"Bob\"))"
+      ]
+    },
+    {
+      "name": "match captures the relation",
+      "spec": "§23",
+      "program": "assert knows(Alice)(Bob)\nassert parent(Alice)(Bob)\nmatch ?relation(Alice)(Bob)",
+      "output": [
+        "claim:1",
+        "claim:2",
+        "relation = knows",
+        "relation = parent"
+      ],
+      "held": [
+        "App(App(Atom(name,\"knows\"),Atom(name,\"Alice\")),Atom(name,\"Bob\"))",
+        "App(App(Atom(name,\"parent\"),Atom(name,\"Alice\")),Atom(name,\"Bob\"))"
+      ]
+    },
+    {
+      "name": "repeated captures must agree",
+      "spec": "§23",
+      "program": "assert pair(Alice)(Alice)\nassert pair(Alice)(Bob)\nmatch pair(?x)(?x)",
+      "output": [
+        "claim:1",
+        "claim:2",
+        "x = Alice"
+      ],
+      "held": [
+        "App(App(Atom(name,\"pair\"),Atom(name,\"Alice\")),Atom(name,\"Alice\"))",
+        "App(App(Atom(name,\"pair\"),Atom(name,\"Alice\")),Atom(name,\"Bob\"))"
+      ]
+    },
+    {
+      "name": "wildcard binds nothing",
+      "spec": "§22",
+      "program": "assert knows(Alice)(Bob)\nmatch knows(Alice)(_)",
+      "output": [
+        "claim:1",
+        "(match)"
+      ],
+      "held": [
+        "App(App(Atom(name,\"knows\"),Atom(name,\"Alice\")),Atom(name,\"Bob\"))"
+      ]
+    },
+    {
+      "name": "match with no results",
+      "spec": "§25",
+      "program": "assert knows(Alice)(Bob)\nmatch knows(Charlie)(?x)",
+      "output": [
+        "claim:1",
+        "(no matches)"
+      ],
+      "held": [
+        "App(App(Atom(name,\"knows\"),Atom(name,\"Alice\")),Atom(name,\"Bob\"))"
+      ]
+    },
+    {
+      "name": "match sees a fact once however many claims assert it",
+      "spec": "§24",
+      "program": "assert knows(Alice)(Bob)\nassert knows(Alice)(Bob)\nassert knows(Alice)(Bob)\nmatch knows(Alice)(?x)",
+      "output": [
+        "claim:1",
+        "claim:2",
+        "claim:3",
+        "x = Bob"
+      ],
+      "held": [
+        "App(App(Atom(name,\"knows\"),Atom(name,\"Alice\")),Atom(name,\"Bob\"))"
+      ]
+    },
+    {
+      "name": "duplicate claims",
+      "spec": "§40.12, §18",
+      "note": "the fact holds while any one claim is live",
+      "program": "assert knows(Alice)(Bob)\nassert knows(Alice)(Bob)\nretract 1\nholds(knows(Alice)(Bob))\nretract 2\nholds(knows(Alice)(Bob))",
+      "output": [
+        "claim:1",
+        "claim:2",
+        "true",
+        "false"
+      ],
+      "held": []
+    },
+    {
+      "name": "retract targets one exact claim",
+      "spec": "§30",
+      "program": "assert knows(Alice)(Bob)\nassert knows(Alice)(Charlie)\nretract claim:1\nholds(knows(Alice)(Bob))\nholds(knows(Alice)(Charlie))",
+      "output": [
+        "claim:1",
+        "claim:2",
+        "false",
+        "true"
+      ],
+      "held": [
+        "App(App(Atom(name,\"knows\"),Atom(name,\"Alice\")),Atom(name,\"Charlie\"))"
+      ]
+    },
+    {
+      "name": "closure persistence rejection",
+      "spec": "§40.13, §13",
+      "program": "assert (x => x)",
+      "output": [],
+      "held": [],
+      "error": "non_persistable_value"
+    },
+    {
+      "name": "application over a closure is not persistable",
+      "spec": "§13",
+      "program": "wraps(x => x)\nassert wraps(x => x)",
+      "output": [
+        "wraps(x => x)"
+      ],
+      "held": [],
+      "error": "non_persistable_value"
+    },
+    {
+      "name": "transaction visibility",
+      "spec": "§40.15, §32",
+      "note": "the second command observes the first",
+      "program": "transaction {\n    assert knows(Alice)(Bob)\n    assert observed(holds(knows(Alice)(Bob)))\n}\nholds(observed(true))",
+      "output": [
+        "claim:1",
+        "claim:2",
+        "true"
+      ],
+      "held": [
+        "App(App(Atom(name,\"knows\"),Atom(name,\"Alice\")),Atom(name,\"Bob\"))",
+        "App(Atom(name,\"observed\"),Atom(name,\"true\"))"
+      ]
+    },
+    {
+      "name": "transaction is atomic",
+      "spec": "§31",
+      "note": "one failing command publishes none of them",
+      "program": "transaction {\n    assert knows(Alice)(Bob)\n    assert (x => x)\n}",
+      "output": [],
+      "held": [],
+      "error": "non_persistable_value"
+    },
+    {
+      "name": "assert and retract in one transaction",
+      "spec": "§31",
+      "program": "transaction {\n    assert knows(Alice)(Bob)\n    retract 1\n}\nholds(knows(Alice)(Bob))",
+      "output": [
+        "claim:1",
+        "false"
+      ],
+      "held": []
+    },
+    {
+      "name": "unknown claim",
+      "spec": "§34",
+      "program": "retract 404",
+      "output": [],
+      "held": [],
+      "error": "unknown_claim"
+    },
+    {
+      "name": "already retracted claim",
+      "spec": "§34",
+      "program": "assert knows(Alice)(Bob)\nretract 1\nretract 1",
+      "output": [
+        "claim:1"
+      ],
+      "held": [],
+      "error": "already_retracted_claim"
+    },
+    {
+      "name": "definitions and application",
+      "spec": "surface",
+      "program": "identity = x => x\nidentity(Alice)\nidentity(knows(Alice)(Bob))",
+      "output": [
+        "Alice",
+        "knows(Alice)(Bob)"
+      ],
+      "held": []
+    },
+    {
+      "name": "a function builds a graph value",
+      "spec": "surface",
+      "note": "both lambdas reduce, then reduction stops at an inert name",
+      "program": "friend = x => y => knows(x)(y)\nfriend(Alice)\nfriend(Alice)(Bob)\nassert friend(Alice)(Bob)\nholds(knows(Alice)(Bob))",
+      "output": [
+        "y => knows(x)(y)",
+        "knows(Alice)(Bob)",
+        "claim:1",
+        "true"
+      ],
+      "held": [
+        "App(App(Atom(name,\"knows\"),Atom(name,\"Alice\")),Atom(name,\"Bob\"))"
+      ]
+    },
+    {
+      "name": "recursion",
+      "spec": "surface",
+      "note": "a definition's cell exists before its term is evaluated",
+      "program": "countdown = f => x => f(x)\ncountdown(step)(Alice)",
+      "output": [
+        "step(Alice)"
+      ],
+      "held": []
+    },
+    {
+      "name": "mutual recursion",
+      "spec": "surface",
+      "program": "even = n => odd(n)\nodd = n => reached(n)\neven(Alice)",
+      "output": [
+        "reached(Alice)"
+      ],
+      "held": []
+    },
+    {
+      "name": "forward reference",
+      "spec": "surface",
+      "note": "every top-level name is collected before any body is resolved",
+      "program": "a = b\nb = Alice\na",
+      "output": [
+        "Alice"
+      ],
+      "held": []
+    },
+    {
+      "name": "cyclic definition",
+      "spec": "surface",
+      "program": "a = b\nb = a\na",
+      "output": [],
+      "held": [],
+      "error": "cyclic_definition"
+    },
+    {
+      "name": "duplicate definition in one program",
+      "spec": "surface",
+      "program": "a = Alice\na = Bob",
+      "output": [],
+      "held": [],
+      "error": "duplicate_definition"
+    },
+    {
+      "name": "a parameter shadows a definition",
+      "spec": "surface",
+      "program": "identity = x => x\nshadowed = identity => identity(Alice)\nidentity(Alice)\nshadowed(g)",
+      "output": [
+        "Alice",
+        "g(Alice)"
+      ],
+      "held": []
+    },
+    {
+      "name": "a definition shadows an atom",
+      "spec": "surface",
+      "program": "Alice = knows(Bob)\nlikes(Alice)",
+      "output": [
+        "likes(knows(Bob))"
+      ],
+      "held": [],
+      "note": "collecting happens before resolving, so a definition is in scope for the whole program, including the lines above it"
+    },
+    {
+      "name": "rebinding an intrinsic's name shadows it program-wide",
+      "spec": "surface",
+      "note": "the binding is replaced, the intrinsic itself is not; that the intrinsic survives is checked in Go, where it can be reached as a value",
+      "program": "assert knows(Alice)(Bob)\nholds = x => shadowed\nholds(knows(Alice)(Bob))",
+      "output": [
+        "claim:1",
+        "shadowed"
+      ],
+      "held": [
+        "App(App(Atom(name,\"knows\"),Atom(name,\"Alice\")),Atom(name,\"Bob\"))"
+      ]
+    },
+    {
+      "name": "closures are lexically scoped",
+      "spec": "surface",
+      "note": "rebinding a name a function uses cannot reach into it",
+      "program": "helper = x => A\nf = x => helper(x)\ng = f\ng(Alice)",
+      "output": [
+        "A"
+      ],
+      "held": []
+    },
+    {
+      "name": "higher order functions",
+      "spec": "§8",
+      "program": "twice = f => x => f(f(x))\ntwice(g)(z)\ncompose = f => g => x => f(g(x))\ncompose(a)(b)(z)",
+      "output": [
+        "g(g(z))",
+        "a(b(z))"
+      ],
+      "held": []
+    },
+    {
+      "name": "kind is not a property primitive",
+      "spec": "§26",
+      "note": "a held fact does not turn an application into an accessor",
+      "program": "assert kind(Task)(task)\nkind(Task)\nmatch kind(Task)(?x)",
+      "output": [
+        "claim:1",
+        "kind(Task)",
+        "x = task"
+      ],
+      "held": [
+        "App(App(Atom(name,\"kind\"),Atom(name,\"Task\")),Atom(name,\"task\"))"
+      ]
+    },
+    {
+      "name": "the kernel is permissive",
+      "spec": "§34",
+      "note": "applying a literal is a symbolic value, not an error",
+      "program": "42(Alice)\nassert 42(Alice)",
+      "output": [
+        "42(Alice)",
+        "claim:1"
+      ],
+      "held": [
+        "App(Atom(int,\"42\"),Atom(name,\"Alice\"))"
+      ]
+    },
+    {
+      "name": "literal tags keep atoms apart",
+      "spec": "§5",
+      "note": "the name 42 and the string \"42\" are different atoms",
+      "program": "assert 42\nassert \"42\"\nholds(42)\nholds(\"42\")",
+      "output": [
+        "claim:1",
+        "claim:2",
+        "true",
+        "true"
+      ],
+      "held": [
+        "Atom(int,\"42\")",
+        "Atom(text,\"42\")"
+      ]
+    },
+    {
+      "name": "negative integers",
+      "spec": "§5",
+      "program": "assert temperature(-40)\nholds(temperature(-40))",
+      "output": [
+        "claim:1",
+        "true"
+      ],
+      "held": [
+        "App(Atom(name,\"temperature\"),Atom(int,\"-40\"))"
+      ]
+    },
+    {
+      "name": "text escaping round trips",
+      "spec": "§36",
+      "program": "assert says(Alice)(\"a \\\"quoted\\\" \\\\ line\\nbreak\\ttab\")",
+      "output": [
+        "claim:1"
+      ],
+      "held": [
+        "App(App(Atom(name,\"says\"),Atom(name,\"Alice\")),Atom(text,\"a \\\"quoted\\\" \\\\ line\\nbreak\\ttab\"))"
+      ]
+    },
+    {
+      "name": "unicode text passes through",
+      "spec": "§36",
+      "program": "assert says(Alice)(\"grüß dich 🧵\")",
+      "output": [
+        "claim:1"
+      ],
+      "held": [
+        "App(App(Atom(name,\"says\"),Atom(name,\"Alice\")),Atom(text,\"grüß dich 🧵\"))"
+      ]
+    },
+    {
+      "name": "a newline ends a statement",
+      "spec": "surface",
+      "note": "the second line is its own statement, not an argument to the first",
+      "program": "knows\n(Alice)",
+      "output": [
+        "knows",
+        "Alice"
+      ],
+      "held": []
+    },
+    {
+      "name": "parentheses let a term span lines",
+      "spec": "surface",
+      "program": "knows(\n    Alice\n)",
+      "output": [
+        "knows(Alice)"
+      ],
+      "held": []
+    },
+    {
+      "name": "an incomplete statement at a newline is a syntax error",
+      "spec": "surface",
+      "program": "f = x =>\n    knows(x)",
+      "output": [],
+      "held": [],
+      "error": "syntax_error"
+    },
+    {
+      "name": "statement keywords are contextual",
+      "spec": "surface",
+      "program": "knows(assert)\nf = assert => assert(match)\nf(g)",
+      "output": [
+        "knows(assert)",
+        "g(match)"
+      ],
+      "held": []
+    },
+    {
+      "name": "comments",
+      "spec": "surface",
+      "program": "# leading\nidentity = x => x   # trailing\nidentity(Alice)     # and here",
+      "output": [
+        "Alice"
+      ],
+      "held": []
+    },
+    {
+      "name": "only assert and retract may appear in a transaction",
+      "spec": "§28",
+      "program": "transaction {\n    x = Alice\n}",
+      "output": [],
+      "held": [],
+      "error": "syntax_error"
+    },
+    {
+      "name": "definitions are program scoped, not statement sequential",
+      "spec": "surface",
+      "note": "one program is one recursive scope; separate programs are sequential",
+      "program": "answer\nanswer = Alice",
+      "output": [
+        "Alice"
+      ],
+      "held": []
+    },
+    {
+      "name": "integer literals canonicalize",
+      "spec": "§5",
+      "note": "leading zeros are not part of an atom's identity",
+      "program": "assert n(042)\nassert n(42)\nmatch n(?x)",
+      "output": [
+        "claim:1",
+        "claim:2",
+        "x = 42"
+      ],
+      "held": [
+        "App(Atom(name,\"n\"),Atom(int,\"42\"))"
+      ]
+    },
+    {
+      "name": "control bytes survive a round trip",
+      "spec": "§36",
+      "program": "assert ctrl(\"\\u0001\\u007f\")",
+      "output": [
+        "claim:1"
+      ],
+      "held": [
+        "App(Atom(name,\"ctrl\"),Atom(text,\"\\u0001\\u007f\"))"
+      ]
+    }
+  ]
+}

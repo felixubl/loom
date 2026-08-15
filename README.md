@@ -120,8 +120,10 @@ See [`examples/friends.loom`](examples/friends.loom).
 
 ## Status
 
-This is v0: the smallest kernel the rest can be built on top of, and nothing
-more. It is implemented and every conformance case in the specification passes.
+**v0.1.** v0 is the smallest kernel the rest can be built on top of, and v0.1
+freezes it: the semantics are pinned by a conformance corpus before any feature
+is added on top. [`docs/roadmap.md`](docs/roadmap.md) lays out what comes next
+and, more importantly, the rule for deciding where a feature belongs.
 
 Built:
 
@@ -216,9 +218,19 @@ graph.
 
 ## Specification
 
-[`docs/loom-v0-spec.md`](docs/loom-v0-spec.md) is normative. The section numbers
-in it are cited throughout the source, and `conformance_test.go` implements
-§40 case by case.
+| Document | Covers |
+| --- | --- |
+| [`loom-v0-spec.md`](docs/loom-v0-spec.md) | semantics. Normative, and cited by section number throughout the source |
+| [`loom-surface-v0.md`](docs/loom-surface-v0.md) | syntax, name resolution, scoping. Normative |
+| [`loom-canonical-form.md`](docs/loom-canonical-form.md) | the canonical byte encoding. Normative |
+| [`roadmap.md`](docs/roadmap.md) | what each version adds, and the classification rule |
+
+`conformance/corpus.json` is the corpus that freezes v0. It is data rather than
+Go tests so that an implementation in any language can run it: the bar is that
+two independent implementations agree byte-for-byte on canonical persisted
+values and result-for-result on evaluation. `conformance_test.go` beside the
+kernel covers the two things a linear program cannot express, snapshot
+consistency and resource limits.
 
 Before adding anything to loom, the specification asks six questions (§44). Can
 it be expressed with ordinary application? Can it be a library function? Is it
@@ -231,10 +243,11 @@ The preference is minimal semantics, rich derivation, aggressive optimization.
 ## Development
 
 ```bash
-go test ./...
+go test ./...              # kernel tests and the conformance corpus
 go test -race ./...
 go vet ./...
 gofmt -l .
+go run ./cmd/loom          # the REPL
 ```
 
 The package has no dependencies outside the Go standard library, and is meant to
